@@ -48,10 +48,19 @@ scene.add(groupeElements);
 
 function viderGroupeElements() {
   while (groupeElements.children.length > 0) {
-    const mesh = groupeElements.children.pop();
-    mesh.geometry.dispose();
-    mesh.material.dispose();
-    groupeElements.remove(mesh);
+    const objet = groupeElements.children.pop();
+    // NOUVEAU — objet peut être un Mesh simple (mur, dalle...) OU un
+    // Group (fenêtre/porte, désormais composées de cadre+vantail+poignée) :
+    // on parcourt récursivement pour libérer la géométrie/matériau de
+    // CHAQUE mesh interne, pas juste l'objet racine (qui, pour un Group,
+    // n'a lui-même ni géométrie ni matériau à libérer).
+    objet.traverse(enfant => {
+      if (enfant.isMesh) {
+        enfant.geometry.dispose();
+        enfant.material.dispose();
+      }
+    });
+    groupeElements.remove(objet);
   }
 }
 
@@ -95,7 +104,10 @@ function redimensionnerViewport() {
   renderer.setSize(largeur, hauteur);
 }
 
-window.addEventListener('resize', redimensionnerViewport);
+window.addEventListener('resize', () => {
+  redimensionnerViewport();
+  redimensionnerPlan2D(); // recalcule aussi la grille du plan 2D si elle est visible
+});
 
 // ============================================================
 // ÉTAT DU PROJET — des LISTES, pas des objets uniques. Le plateau
@@ -292,6 +304,29 @@ function dessinerTexturePlaco(ctx, taille) {
   }
 }
 
+// NOUVEAU — Ardoise : plaques rectangulaires sombres à reflets bleutés,
+// posées "en écailles" comme la tuile mais avec un rendu plus plat et
+// anguleux (l'ardoise ne bombe pas comme une tuile en terre cuite).
+function dessinerTextureArdoise(ctx, taille) {
+  ctx.fillStyle = '#2b3038'; // joints, gris-bleu très sombre
+  ctx.fillRect(0, 0, taille, taille);
+  const hauteurRangee = taille / 7;
+  const largeurPlaque = taille / 5;
+  const joint = 2;
+  for (let rangee = 0; rangee < 7; rangee++) {
+    const decalage = (rangee % 2 === 0) ? 0 : largeurPlaque / 2;
+    for (let x = -largeurPlaque; x < taille + largeurPlaque; x += largeurPlaque) {
+      // Bruit de teinte plaque par plaque : l'ardoise naturelle n'est
+      // jamais parfaitement uniforme, du gris-ardoise au bleu-nuit.
+      const gris = 45 + Math.floor(Math.random() * 25);
+      const teinteBleue = 6 + Math.floor(Math.random() * 10);
+      ctx.fillStyle = `rgb(${gris},${gris + 2},${gris + teinteBleue})`;
+      ctx.fillRect(x + decalage + joint / 2, rangee * hauteurRangee + joint / 2,
+                   largeurPlaque - joint, hauteurRangee - joint);
+    }
+  }
+}
+
 // Un seul point d'entrée pour les 6 fonctions creerMesh* ci-dessous :
 // associe un nom de matériau (structure OU toiture) à sa texture.
 const GENERATEURS_TEXTURE = {
@@ -300,6 +335,7 @@ const GENERATEURS_TEXTURE = {
   bois: dessinerTextureBois,
   tuile: dessinerTextureTuile,
   tole: dessinerTextureTole,
+  ardoise: dessinerTextureArdoise, // NOUVEAU
   placo: dessinerTexturePlaco,
 };
 
@@ -362,50 +398,155 @@ function creerMeshPoteau(poteau, couleurHex) {
 // La fenêtre a besoin de connaître SON mur pour se positionner dessus
 // (elle n'a pas ses propres positionX/positionZ, seulement un offset
 // le long du mur).
+//
+// NOUVEAU — structure en 3 parties, comme une vraie fenêtre :
+//   - un CADRE (dormant) fixe, en PVC/aluminium clair, qui reste dans le mur
+//   - un VANTAIL (partie vitrée) qui pivote autour d'un côté (charnière)
+//     quand fenetre.ouvert === true -- exactement comme une fenêtre à la
+//     française s'ouvre en tournant sur ses gonds verticaux
+//   - une POIGNÉE (petite tige métallique) fixée sur le vantail, du côté
+//     opposé à la charnière
+// Le pivot est fait avec un THREE.Group : on positionne le GROUPE sur la
+// charnière (le bord du vantail), puis le vantail est dessiné DÉCALÉ à
+// l'intérieur du groupe -- c'est ce qui permet une vraie rotation autour
+// du bord plutôt qu'autour du centre.
 function creerMeshFenetre(fenetre, mur) {
   if (!mur) return null; // mur supprimé entre-temps, on ignore silencieusement
   const d = directionMur(mur);
   const debut = pointDebutMur(mur);
   const centreX = debut.x + d.dx * fenetre.offset;
   const centreZ = debut.z + d.dz * fenetre.offset;
+  const epaisseurCadre = mur.epaisseur * 1.05;
 
-  // Légèrement plus épaisse que le mur (x1.05) pour qu'elle "sorte" un
-  // peu visuellement des deux côtés, plutôt que d'être noyée dedans.
-  const geometrie = new THREE.BoxGeometry(fenetre.largeur, fenetre.hauteur, mur.epaisseur * 1.05);
-  const materiau = new THREE.MeshStandardMaterial({
+  const groupe = new THREE.Group();
+  groupe.position.set(centreX, fenetre.hauteur_allege + fenetre.hauteur / 2, centreZ);
+  groupe.rotation.y = mur.rotationY;
+
+  // --- Cadre (dormant) : PVC blanc, matériau réel très courant en
+  // menuiserie extérieure aujourd'hui (bien plus que le bois ou l'alu
+  // sur des fenêtres standard) ---
+  const materiauCadre = new THREE.MeshStandardMaterial({ color: 0xf2f2f0, roughness: 0.4 });
+  const cadre = new THREE.Mesh(
+    new THREE.BoxGeometry(fenetre.largeur, fenetre.hauteur, epaisseurCadre),
+    materiauCadre
+  );
+  groupe.add(cadre);
+
+  // --- Vantail (partie vitrée qui s'ouvre) : légèrement plus petit que
+  // le cadre (feuillure visible), en verre semi-transparent bleuté --
+  // c'est la vraie teinte du verre standard vu par la tranche/reflet. ---
+  const largeurVantail = fenetre.largeur * 0.88;
+  const hauteurVantail = fenetre.hauteur * 0.88;
+  const materiauVerre = new THREE.MeshStandardMaterial({
     color: 0x8ecae6,
     transparent: true,
-    opacity: 0.55,
+    opacity: 0.5,
+    roughness: 0.1,
+    metalness: 0.1,
   });
-  const mesh = new THREE.Mesh(geometrie, materiau);
-  mesh.position.set(centreX, fenetre.hauteur_allege + fenetre.hauteur / 2, centreZ);
-  mesh.rotation.y = mur.rotationY;
-  return mesh;
+  const pivotVantail = new THREE.Group();
+  // Charnière sur le bord GAUCHE du vantail (dans le repère du cadre) :
+  // le groupe pivot est positionné là, et le vantail est dessiné décalé
+  // vers la droite à l'intérieur -- c'est ce décalage qui crée l'effet
+  // de rotation "autour du bord" plutôt qu'autour du centre.
+  pivotVantail.position.set(-fenetre.largeur / 2 + 0.02, 0, 0);
+  const vantail = new THREE.Mesh(
+    new THREE.BoxGeometry(largeurVantail, hauteurVantail, epaisseurCadre * 0.5),
+    materiauVerre
+  );
+  vantail.position.set(largeurVantail / 2, 0, 0);
+  pivotVantail.add(vantail);
+
+  // --- Poignée : tige métallique horizontale, sur le bord opposé à la
+  // charnière (donc côté droit du vantail) -- position et proportions
+  // realistes d'une poignée de fenêtre standard (~12cm). ---
+  const materiauMetal = new THREE.MeshStandardMaterial({ color: 0xc0c0c0, metalness: 0.8, roughness: 0.3 });
+  const poignee = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.12, 8), materiauMetal);
+  poignee.rotation.z = Math.PI / 2; // couché à l'horizontale
+  poignee.position.set(largeurVantail - 0.08, 0, epaisseurCadre * 0.3);
+  pivotVantail.add(poignee);
+
+  // Angle d'ouverture : une fenêtre à la française s'ouvre largement
+  // (contrairement à une porte, elle n'a pas besoin de rester praticable
+  // pour marcher au travers) -- on va jusqu'à ~100° pour que l'effet
+  // "ouvert" soit visible sans ambiguïté même sous un angle de caméra
+  // peu favorable pendant la démo.
+  pivotVantail.rotation.y = fenetre.ouvert ? THREE.MathUtils.degToRad(100) : 0;
+
+  groupe.add(pivotVantail);
+  groupe.castShadow = true;
+  groupe.traverse(obj => { if (obj.isMesh) obj.castShadow = true; });
+  return groupe;
 }
 
-// NOUVEAU — Porte : même principe que la fenêtre, mais part toujours du
-// sol (pas de hauteur_allege) et est opaque (bois plein), pas vitrée.
+// NOUVEAU — Porte : même principe en 3 parties (cadre + vantail + poignée)
+// que la fenêtre, mais le vantail est opaque (bois plein) et part du sol.
 function creerMeshPorte(porte, mur) {
   if (!mur) return null;
   const d = directionMur(mur);
   const debut = pointDebutMur(mur);
   const centreX = debut.x + d.dx * porte.offset;
   const centreZ = debut.z + d.dz * porte.offset;
+  const epaisseurCadre = mur.epaisseur * 1.05;
 
-  const geometrie = new THREE.BoxGeometry(porte.largeur, porte.hauteur, mur.epaisseur * 1.05);
-  const materiau = new THREE.MeshStandardMaterial({ color: 0x6b4423 }); // bois foncé, opaque
-  appliquerTexture(materiau, 'bois', porte.largeur, porte.hauteur);
-  const mesh = new THREE.Mesh(geometrie, materiau);
-  mesh.position.set(centreX, porte.hauteur / 2, centreZ);
-  mesh.rotation.y = mur.rotationY;
-  return mesh;
+  const groupe = new THREE.Group();
+  groupe.position.set(centreX, porte.hauteur / 2, centreZ);
+  groupe.rotation.y = mur.rotationY;
+
+  // --- Cadre (huisserie) : bois clair, légèrement plus large que le
+  // vantail, comme une vraie huisserie qui dépasse du vantail posé dedans ---
+  const materiauCadre = new THREE.MeshStandardMaterial({ color: 0xd8c39a, roughness: 0.7 });
+  appliquerTexture(materiauCadre, 'bois', porte.largeur, porte.hauteur);
+  const cadre = new THREE.Mesh(
+    new THREE.BoxGeometry(porte.largeur, porte.hauteur, epaisseurCadre),
+    materiauCadre
+  );
+  groupe.add(cadre);
+
+  // --- Vantail : bois plein (chêne foncé, matériau réel très courant
+  // en porte intérieure/entrée) ---
+  const largeurVantail = porte.largeur * 0.92;
+  const hauteurVantail = porte.hauteur * 0.96;
+  const materiauVantail = new THREE.MeshStandardMaterial({ color: 0x5c3a21, roughness: 0.6 });
+  appliquerTexture(materiauVantail, 'bois', largeurVantail, hauteurVantail);
+  const pivotVantail = new THREE.Group();
+  pivotVantail.position.set(-porte.largeur / 2 + 0.03, -porte.hauteur * 0.02, 0);
+  const vantail = new THREE.Mesh(
+    new THREE.BoxGeometry(largeurVantail, hauteurVantail, epaisseurCadre * 0.6),
+    materiauVantail
+  );
+  vantail.position.set(largeurVantail / 2, 0, 0);
+  pivotVantail.add(vantail);
+
+  // --- Poignée : bec-de-cane horizontal, hauteur réaliste ~1m depuis le
+  // bas de la porte (norme usuelle 95-105cm), côté opposé à la charnière ---
+  const materiauMetal = new THREE.MeshStandardMaterial({ color: 0xb08d57, metalness: 0.75, roughness: 0.25 }); // laiton brossé, très courant sur porte intérieure
+  const poignee = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.14, 8), materiauMetal);
+  poignee.rotation.z = Math.PI / 2;
+  poignee.position.set(largeurVantail - 0.1, -porte.hauteur / 2 + 1.0, epaisseurCadre * 0.35);
+  pivotVantail.add(poignee);
+  // Plaque de propreté (rosace) derrière la poignée, petit détail qui
+  // évite que le bec-de-cane ait l'air de flotter devant le bois
+  const rosace = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.01, 16), materiauMetal);
+  rosace.rotation.x = Math.PI / 2;
+  rosace.position.set(largeurVantail - 0.1, -porte.hauteur / 2 + 1.0, epaisseurCadre * 0.31);
+  pivotVantail.add(rosace);
+
+  // Porte : ouverture plus modeste que la fenêtre (~80°), suffisante
+  // pour lire clairement "ouvert" sans que le vantail ne traverse le mur
+  // voisin dans les configurations d'angle serré.
+  pivotVantail.rotation.y = porte.ouvert ? THREE.MathUtils.degToRad(80) : 0;
+
+  groupe.add(pivotVantail);
+  groupe.traverse(obj => { if (obj.isMesh) obj.castShadow = true; });
+  return groupe;
 }
 
 // NOUVEAU — Toit à deux pans (forme "maison") au-dessus d'une emprise
 // rectangulaire. On construit un triangle en coupe (pignon), qu'on extrude
 // sur la longueur. Simplification assumée du prototype : pas de rotation
 // (comme les dalles), le toit est toujours aligné sur les axes du monde.
-const COULEURS_TOIT = { tuile: 0xb33a2e, tole: 0x8c8c96, beton: 0x9a9a9a };
+const COULEURS_TOIT = { tuile: 0xb33a2e, tole: 0x8c8c96, ardoise: 0x363c46, beton: 0x9a9a9a };
 
 function creerMeshToit(toit) {
   const demiLargeur = toit.largeur / 2;
@@ -428,6 +569,7 @@ function creerMeshToit(toit) {
   const mesh = new THREE.Mesh(geometrie, materiau);
   // hauteur_support = hauteur à laquelle repose le toit (sommet des murs porteurs)
   mesh.position.set(toit.positionX, toit.hauteur_support, toit.positionZ);
+  mesh.rotation.y = toit.rotationY || 0; // NOUVEAU -- le toit peut désormais s'orienter comme un mur
   mesh.castShadow = true;
   return mesh;
 }
@@ -604,9 +746,10 @@ const MATERIAUX_SECOURS = {
 const PRIX_FENETRE_SECOURS = 350;
 const PRIX_PORTE_SECOURS = 280; // NOUVEAU
 const MATERIAUX_TOIT_SECOURS = { // NOUVEAU
-  tuile: { prix_eur_m2: 45, poids_kg_m2: 40 },
-  tole:  { prix_eur_m2: 25, poids_kg_m2: 12 },
-  beton: { prix_eur_m2: 60, poids_kg_m2: 300 },
+  tuile:   { prix_eur_m2: 45, poids_kg_m2: 40 },
+  tole:    { prix_eur_m2: 25, poids_kg_m2: 12 },
+  ardoise: { prix_eur_m2: 85, poids_kg_m2: 35 }, // NOUVEAU -- doit rester en miroir avec main.py
+  beton:   { prix_eur_m2: 60, poids_kg_m2: 300 },
 };
 const ELECTRICITE_PRIX_SECOURS = { prise: 45, interrupteur: 35, point_lumineux: 60 }; // NOUVEAU
 const PRIX_TABLEAU_ELECTRIQUE_SECOURS = 450; // NOUVEAU
@@ -665,10 +808,12 @@ function calculerProjetSecours() {
 
   const resultatsDalles = etat.dalles.map(dalle => {
     const info = MATERIAUX_SECOURS[dalle.materiau] || MATERIAUX_SECOURS.beton;
-    const volume = dalle.longueur * dalle.largeur * dalle.epaisseur;
+    const surface = dalle.longueur * dalle.largeur; // NOUVEAU
+    const volume = surface * dalle.epaisseur;
     return {
       id: dalle.id,
       volume_m3: Math.round(volume * 1000) / 1000,
+      surface_m2: Math.round(surface * 100) / 100, // NOUVEAU
       poids_kg: Math.round(volume * info.densite_kg_m3 * 10) / 10,
       cout_total_eur: Math.round(volume * info.prix_eur_m3 * 100) / 100,
       couleur_hex: info.couleur_hex,
@@ -712,6 +857,7 @@ function calculerProjetSecours() {
   const coutElectricite = resultatsElectricite.reduce((s, r) => s + r.cout_eur, 0)
     + (etat.tableau_electrique ? PRIX_TABLEAU_ELECTRIQUE_SECOURS : 0); // NOUVEAU
   const poidsToits = resultatsToits.reduce((s, r) => s + r.poids_kg, 0); // NOUVEAU
+  const surfaceHabitable = resultatsDalles.reduce((s, r) => s + r.surface_m2, 0); // NOUVEAU
 
   return {
     murs: resultatsMurs,
@@ -722,6 +868,7 @@ function calculerProjetSecours() {
     elements_electriques: resultatsElectricite, // NOUVEAU
     total: {
       volume_m3: Math.round(tousLesResultats.reduce((s, r) => s + r.volume_m3, 0) * 1000) / 1000,
+      surface_habitable_m2: Math.round(surfaceHabitable * 100) / 100, // NOUVEAU
       poids_kg: Math.round((tousLesResultats.reduce((s, r) => s + r.poids_kg, 0) + poidsToits) * 10) / 10,
       cout_total_eur: Math.round((coutStructure + coutToits + coutElectricite) * 100) / 100,
       nb_murs: etat.murs.length,
@@ -870,6 +1017,7 @@ function appliquerResultat(resultat, viaSecours) {
   document.getElementById('res-nb').textContent =
     `${nb.nb_murs} mur${nb.nb_murs > 1 ? 's' : ''} · ${nb.nb_dalles} dalle${nb.nb_dalles > 1 ? 's' : ''} · ${nb.nb_poteaux} poteau${nb.nb_poteaux > 1 ? 'x' : ''} · ${nb.nb_fenetres} fenêtre${nb.nb_fenetres > 1 ? 's' : ''} · ${nb.nb_portes} porte${nb.nb_portes > 1 ? 's' : ''} · ${nb.nb_toits} toit${nb.nb_toits > 1 ? 's' : ''} · ${nb.nb_elements_electriques} élec.`;
   document.getElementById('res-volume').textContent = resultat.total.volume_m3;
+  document.getElementById('res-surface').textContent = resultat.total.surface_habitable_m2;
   document.getElementById('res-poids').textContent = resultat.total.poids_kg;
 
   const elementCout = document.getElementById('res-cout');
@@ -1082,6 +1230,9 @@ function rafraichirListeElements(resultat) {
           <label>Appui<input type="number" step="0.1" min="0" max="10" value="${fenetre.hauteur_allege}" data-type="fenetres" data-id="${fenetre.id}" data-champ="hauteur_allege"></label>
           <label>Position sur mur<input type="number" step="0.1" min="0" value="${fenetre.offset}" data-type="fenetres" data-id="${fenetre.id}" data-champ="offset"></label>
         </div>
+        <div class="ligne-transformations">
+          <button class="bouton-miroir" data-action="basculer-ouverture" data-type="fenetres" data-id="${fenetre.id}">${fenetre.ouvert ? '🔓 Ouverte — Fermer' : '🔒 Fermée — Ouvrir'}</button>
+        </div>
       </div>`;
   });
 
@@ -1099,6 +1250,9 @@ function rafraichirListeElements(resultat) {
           <label>Largeur<input type="number" step="0.1" min="0.6" max="3" value="${porte.largeur}" data-type="portes" data-id="${porte.id}" data-champ="largeur"></label>
           <label>Hauteur<input type="number" step="0.1" min="1.8" max="3" value="${porte.hauteur}" data-type="portes" data-id="${porte.id}" data-champ="hauteur"></label>
           <label>Position sur mur<input type="number" step="0.1" min="0" value="${porte.offset}" data-type="portes" data-id="${porte.id}" data-champ="offset"></label>
+        </div>
+        <div class="ligne-transformations">
+          <button class="bouton-miroir" data-action="basculer-ouverture" data-type="portes" data-id="${porte.id}">${porte.ouvert ? '🔓 Ouverte — Fermer' : '🔒 Fermée — Ouvrir'}</button>
         </div>
       </div>`;
   });
@@ -1118,10 +1272,12 @@ function rafraichirListeElements(resultat) {
           <label>Longueur<input type="number" step="0.1" min="1" max="50" value="${toit.longueur}" data-type="toits" data-id="${toit.id}" data-champ="longueur"></label>
           <label>Largeur<input type="number" step="0.1" min="1" max="30" value="${toit.largeur}" data-type="toits" data-id="${toit.id}" data-champ="largeur"></label>
           <label>Pente (°)<input type="number" step="1" min="0" max="60" value="${toit.pente_degres}" data-type="toits" data-id="${toit.id}" data-champ="pente_degres"></label>
+          <label>Rotation (°)<input type="number" step="1" value="${THREE.MathUtils.radToDeg(toit.rotationY || 0).toFixed(1)}" data-type="toits" data-id="${toit.id}" data-champ="rotationY_deg"></label>
           <label>Matériau<select data-type="toits" data-id="${toit.id}" data-champ="materiau">
-            <option value="tuile" ${toit.materiau === 'tuile' ? 'selected' : ''}>Tuile</option>
-            <option value="tole" ${toit.materiau === 'tole' ? 'selected' : ''}>Tôle</option>
-            <option value="beton" ${toit.materiau === 'beton' ? 'selected' : ''}>Béton</option>
+            <option value="tuile" ${toit.materiau === 'tuile' ? 'selected' : ''}>Tuile terre cuite</option>
+            <option value="ardoise" ${toit.materiau === 'ardoise' ? 'selected' : ''}>Ardoise naturelle</option>
+            <option value="tole" ${toit.materiau === 'tole' ? 'selected' : ''}>Bac acier / tôle</option>
+            <option value="beton" ${toit.materiau === 'beton' ? 'selected' : ''}>Béton (toit-terrasse)</option>
           </select></label>
           <label>Position X<input type="number" step="0.1" value="${toit.positionX}" data-type="toits" data-id="${toit.id}" data-champ="positionX"></label>
           <label>Position Z<input type="number" step="0.1" value="${toit.positionZ}" data-type="toits" data-id="${toit.id}" data-champ="positionZ"></label>
@@ -1271,6 +1427,22 @@ document.getElementById('liste-elements').addEventListener('click', (evt) => {
   const bouton = evt.target.closest('[data-action="dupliquer"]');
   if (!bouton) return;
   dupliquerElement(bouton.dataset.type, bouton.dataset.id);
+});
+
+// NOUVEAU — Bouton "Ouvrir/Fermer" d'une fenêtre ou d'une porte : bascule
+// simplement un booléen sur l'objet, le rendu 3D (voir creerMeshFenetre/
+// creerMeshPorte) fait pivoter le vantail en conséquence au recalcul
+// suivant. Ce champ n'existe PAS côté backend (Pydantic l'ignore
+// silencieusement s'il est envoyé) -- c'est un état purement visuel, qui
+// n'a aucune incidence sur le métré.
+document.getElementById('liste-elements').addEventListener('click', (evt) => {
+  const bouton = evt.target.closest('[data-action="basculer-ouverture"]');
+  if (!bouton) return;
+  const { type, id } = bouton.dataset;
+  const objet = etat[type].find(o => o.id === id);
+  if (!objet) return;
+  objet.ouvert = !objet.ouvert;
+  recalculerProjet();
 });
 
 // Délégation d'événements : un seul listener pour tous les champs de
@@ -1426,13 +1598,37 @@ document.querySelectorAll('.outil-dessin').forEach(bouton => {
     if (bouton.dataset.mode) {
       const vue2d = document.getElementById('vue-2d');
       if (vue2d.classList.contains('cachee')) {
-        dessinerPlan2D();
         vue2d.classList.remove('cachee');
+        redimensionnerPlan2D(); // le conteneur vient de devenir visible, sa taille n'était pas connue avant
+        dessinerPlan2D();
         document.getElementById('toggle-vue').textContent = 'Revenir à la vue 3D';
       }
     }
   });
 });
+
+// ============================================================
+// NOUVEAU — ACCROCHAGE À LA GRILLE
+// ============================================================
+// Le pas d'accrochage (0.5m) est appliqué en coordonnées MONDE, pas en
+// pixels écran -- il fonctionne donc de façon identique quelle que
+// soit la zone actuellement visible à l'écran, et reste valable même
+// pour un point très éloigné de l'origine (la grille "logique" n'a pas
+// de limite, contrairement à ce qui est affiché à l'écran).
+const PAS_GRILLE_ACCROCHAGE_M = 0.5;
+
+function accrocherALaGrille(position) {
+  return {
+    x: Math.round(position.x / PAS_GRILLE_ACCROCHAGE_M) * PAS_GRILLE_ACCROCHAGE_M,
+    z: Math.round(position.z / PAS_GRILLE_ACCROCHAGE_M) * PAS_GRILLE_ACCROCHAGE_M,
+  };
+}
+
+// Outils qui s'accrochent à un mur EXISTANT plutôt qu'à une position
+// libre : pour ceux-là, on garde la position brute du clic. Un
+// pré-accrochage à la grille fausserait la détection du mur le plus
+// proche (trouverMurProche) et le calcul de l'offset le long du mur.
+const OUTILS_ATTACHES_AU_MUR = ['fenetre', 'porte', 'prise', 'interrupteur'];
 
 function pointSourisVersMonde(evt) {
   const svg = document.getElementById('svg-plan');
@@ -1444,6 +1640,13 @@ function pointSourisVersMonde(evt) {
     x: (pointSVG.x - PLAN_ORIGINE_X) / PLAN_ECHELLE,
     z: (pointSVG.y - PLAN_ORIGINE_Y) / PLAN_ECHELLE,
   };
+
+  // NOUVEAU — Accrochage à la grille, avant l'accroche à 45° : on veut
+  // que l'angle (si Maj est enfoncée) se calcule à partir d'un point de
+  // départ déjà propre, pas d'une position brute imprécise au pixel près.
+  if (!OUTILS_ATTACHES_AU_MUR.includes(modeDessin)) {
+    position = accrocherALaGrille(position);
+  }
 
   // Accrochage 45° pendant le tracé du mur (2e clic), si Maj est enfoncée.
   if (shiftEnfoncee && modeDessin === 'mur' && pointDepart) {
@@ -1586,6 +1789,7 @@ document.getElementById('svg-plan').addEventListener('click', (evt) => {
       pente_degres: d.pente_degres, materiau: d.materiau, hauteur_support: d.hauteur_support,
       positionX: (pointDepart.x + position.x) / 2,
       positionZ: (pointDepart.z + position.z) / 2,
+      rotationY: 0, // NOUVEAU -- ajustable ensuite dans la liste des éléments, comme un mur
     });
     pointDepart = null;
     recalculerProjet();
@@ -1647,11 +1851,42 @@ document.getElementById('svg-plan').addEventListener('mousemove', (evt) => {
 // ============================================================
 
 const PLAN_MARGE = 50;
-const PLAN_ZONE = 300;
 const PLAN_PORTEE_METRES = 20;
-const PLAN_ECHELLE = PLAN_ZONE / PLAN_PORTEE_METRES;
-const PLAN_ORIGINE_X = PLAN_MARGE + PLAN_ZONE / 2;
-const PLAN_ORIGINE_Y = PLAN_MARGE + PLAN_ZONE / 2;
+
+// NOUVEAU — PLAN_ZONE_X/Y (au lieu d'un unique PLAN_ZONE carré) : la
+// grille couvrait avant une zone fixe 300x300, centrée dans un viewBox
+// carré 400x400. Comme la zone de construction réelle (#vue-2d) est
+// rectangulaire (large écran), le SVG carré était mis à l'échelle avec
+// "meet" (comportement par défaut) et laissait des bandes vides à
+// gauche/droite -- la grille ne couvrait pas tout l'espace. Ces deux
+// valeurs sont maintenant recalculées à chaque redimensionnement (voir
+// redimensionnerPlan2D) pour correspondre exactement à la largeur et
+// la hauteur réelles du conteneur, sans distorsion : l'échelle
+// (PLAN_ECHELLE, pixels par mètre) reste fixe, seule la zone visible
+// s'agrandit.
+let PLAN_ZONE_X = 300;
+let PLAN_ZONE_Y = 300;
+const PLAN_ECHELLE = PLAN_ZONE_X / PLAN_PORTEE_METRES; // pixels par mètre, fixé une fois pour toutes
+let PLAN_ORIGINE_X = PLAN_MARGE + PLAN_ZONE_X / 2;
+let PLAN_ORIGINE_Y = PLAN_MARGE + PLAN_ZONE_Y / 2;
+
+// Recalcule la taille du plan 2D pour qu'il remplisse exactement
+// #vue-2d, quelle que soit la forme de la fenêtre. À appeler avant
+// tout dessinerPlan2D() si la fenêtre a pu changer de taille depuis le
+// dernier calcul (ouverture du plan, redimensionnement de la fenêtre,
+// panneau IA qui apparaît/disparaît...).
+function redimensionnerPlan2D() {
+  const conteneur = document.getElementById('vue-2d');
+  const largeur = conteneur.clientWidth;
+  const hauteur = conteneur.clientHeight;
+  if (largeur === 0 || hauteur === 0) return; // pas visible actuellement, on ignore (voir #vue-2d.cachee)
+
+  document.getElementById('svg-plan').setAttribute('viewBox', `0 0 ${largeur} ${hauteur}`);
+  PLAN_ZONE_X = largeur - 2 * PLAN_MARGE;
+  PLAN_ZONE_Y = hauteur - 2 * PLAN_MARGE;
+  PLAN_ORIGINE_X = PLAN_MARGE + PLAN_ZONE_X / 2;
+  PLAN_ORIGINE_Y = PLAN_MARGE + PLAN_ZONE_Y / 2;
+}
 
 function mondeVersPixel(x, z) {
   return { x: PLAN_ORIGINE_X + x * PLAN_ECHELLE, y: PLAN_ORIGINE_Y + z * PLAN_ECHELLE };
@@ -1673,12 +1908,51 @@ function coinsMurPixels(mur) {
   });
 }
 
+// NOUVEAU — Version générique de coinsMurPixels, pour tout rectangle
+// centré+tourné (utilisée par le toit maintenant qu'il est orientable,
+// comme un mur). Le mur garde sa propre fonction ci-dessus pour ne pas
+// risquer de régression sur du code déjà fiable en démo.
+function coinsRectanglePixels(centreX, centreZ, longueur, largeur, rotationY) {
+  const demiL = longueur / 2;
+  const demiP = largeur / 2;
+  const coinsLocaux = [
+    { x: -demiL, z: -demiP }, { x: demiL, z: -demiP },
+    { x: demiL, z: demiP }, { x: -demiL, z: demiP },
+  ];
+  const cosT = Math.cos(rotationY);
+  const sinT = Math.sin(rotationY);
+  return coinsLocaux.map(c => {
+    const xMonde = c.x * cosT + c.z * sinT + centreX;
+    const zMonde = -c.x * sinT + c.z * cosT + centreZ;
+    return mondeVersPixel(xMonde, zMonde);
+  });
+}
+
+// NOUVEAU — Portée FIXE de la grille dessinée, volontairement plus
+// grande que ce qui tient à l'écran (au lieu d'un nombre de lignes
+// recalculé pour s'arrêter pile au bord du conteneur). Le SVG découpe
+// (clip) automatiquement tout ce qui sort du viewBox : ça ne coûte
+// rien de plus que quelques lignes de dessin en trop, et ça garantit
+// qu'il n'y a jamais de bord de grille visible artificiellement à
+// l'intérieur de la zone affichée -- quelle que soit la taille de la
+// fenêtre, et prêt pour un futur zoom/déplacement de la vue.
+const PORTEE_GRILLE_VISUELLE_M = 50; // grille dessinée de -50m à +50m autour de l'origine
+
 function genererGrilleSVG() {
   let lignes = '';
-  for (let m = 0; m <= PLAN_PORTEE_METRES; m++) {
-    const px = PLAN_MARGE + m * PLAN_ECHELLE;
-    lignes += `<line x1="${px}" y1="${PLAN_MARGE}" x2="${px}" y2="${PLAN_MARGE + PLAN_ZONE}" />`;
-    lignes += `<line x1="${PLAN_MARGE}" y1="${px}" x2="${PLAN_MARGE + PLAN_ZONE}" y2="${px}" />`;
+  // Lignes verticales : une par mètre, sur toute la portée large
+  for (let m = -PORTEE_GRILLE_VISUELLE_M; m <= PORTEE_GRILLE_VISUELLE_M; m++) {
+    const { x: px } = mondeVersPixel(m, 0);
+    const yHaut = PLAN_ORIGINE_Y - PORTEE_GRILLE_VISUELLE_M * PLAN_ECHELLE;
+    const yBas = PLAN_ORIGINE_Y + PORTEE_GRILLE_VISUELLE_M * PLAN_ECHELLE;
+    lignes += `<line x1="${px}" y1="${yHaut}" x2="${px}" y2="${yBas}" />`;
+  }
+  // Lignes horizontales : une par mètre, sur toute la portée large
+  for (let m = -PORTEE_GRILLE_VISUELLE_M; m <= PORTEE_GRILLE_VISUELLE_M; m++) {
+    const { y: py } = mondeVersPixel(0, m);
+    const xGauche = PLAN_ORIGINE_X - PORTEE_GRILLE_VISUELLE_M * PLAN_ECHELLE;
+    const xDroite = PLAN_ORIGINE_X + PORTEE_GRILLE_VISUELLE_M * PLAN_ECHELLE;
+    lignes += `<line x1="${xGauche}" y1="${py}" x2="${xDroite}" y2="${py}" />`;
   }
   return lignes;
 }
@@ -1760,12 +2034,13 @@ function dessinerPlan2D() {
     html += `<line x1="${p1.x}" y1="${p1.y}" x2="${p2.x}" y2="${p2.y}" stroke="#6b4423" stroke-width="5" stroke-linecap="round" />`;
   });
 
-  // NOUVEAU — Toits (contour pointillé rouge au-dessus du plan)
+  // NOUVEAU — Toits (contour pointillé rouge au-dessus du plan, orientable)
   etat.toits.forEach((toit, i) => {
-    const coin = mondeVersPixel(toit.positionX - toit.longueur / 2, toit.positionZ - toit.largeur / 2);
-    const l = toit.longueur * PLAN_ECHELLE, p = toit.largeur * PLAN_ECHELLE;
-    html += `<rect x="${coin.x}" y="${coin.y}" width="${l}" height="${p}" fill="none" stroke="#b33a2e" stroke-width="1.5" stroke-dasharray="4,3" />
-      <text x="${coin.x + l / 2}" y="${coin.y + p / 2}" font-size="10" text-anchor="middle" fill="#b33a2e">Toit ${i + 1}</text>`;
+    const coins = coinsRectanglePixels(toit.positionX, toit.positionZ, toit.longueur, toit.largeur, toit.rotationY || 0);
+    const points = coins.map(c => `${c.x},${c.y}`).join(' ');
+    const centre = mondeVersPixel(toit.positionX, toit.positionZ);
+    html += `<polygon points="${points}" fill="none" stroke="#b33a2e" stroke-width="1.5" stroke-dasharray="4,3" />
+      <text x="${centre.x}" y="${centre.y}" font-size="10" text-anchor="middle" fill="#b33a2e">Toit ${i + 1}</text>`;
   });
 
   // NOUVEAU — Éléments électriques (petits points jaunes)
@@ -1798,8 +2073,9 @@ document.getElementById('toggle-vue').addEventListener('click', () => {
   const vue2d = document.getElementById('vue-2d');
   const bouton = document.getElementById('toggle-vue');
   if (vue2d.classList.contains('cachee')) {
-    dessinerPlan2D();
     vue2d.classList.remove('cachee');
+    redimensionnerPlan2D(); // le conteneur vient de devenir visible, sa taille n'était pas connue avant
+    dessinerPlan2D();
     bouton.textContent = 'Revenir à la vue 3D';
   } else {
     vue2d.classList.add('cachee');
@@ -1904,7 +2180,11 @@ renderer.domElement.addEventListener('click', (evt) => {
   sourisNormalisee.y = -((evt.clientY - rect.top) / rect.height) * 2 + 1;
 
   raycaster.setFromCamera(sourisNormalisee, camera);
-  const intersections = raycaster.intersectObjects(groupeElements.children);
+  // recursive=true : nécessaire depuis que les fenêtres/portes sont des
+  // THREE.Group (cadre + vantail + poignée) plutôt qu'un Mesh unique --
+  // sans ça, un Group n'a pas de géométrie propre et n'est jamais touché
+  // par le rayon, même en cliquant pile sur la vitre ou la poignée.
+  const intersections = raycaster.intersectObjects(groupeElements.children, true);
 
   if (intersections.length === 0) {
     deselectionner();
@@ -1913,9 +2193,15 @@ renderer.domElement.addEventListener('click', (evt) => {
 
   // Le premier élément de la liste est le plus proche de la caméra
   // (Three.js trie déjà les intersections par distance croissante).
-  const meshTouche = intersections[0].object;
-  if (!meshTouche.userData?.type) return; // sécurité, ne devrait pas arriver
-  selectionner(meshTouche.userData.type, meshTouche.userData.id);
+  // On remonte la chaîne de parents jusqu'à trouver le userData -- avec
+  // le mode récursif, l'objet touché est souvent un enfant (le vantail,
+  // la poignée...) et pas le Group racine qui porte {type, id}.
+  let objetTouche = intersections[0].object;
+  while (objetTouche && !objetTouche.userData?.type) {
+    objetTouche = objetTouche.parent;
+  }
+  if (!objetTouche) return; // sécurité, ne devrait pas arriver
+  selectionner(objetTouche.userData.type, objetTouche.userData.id);
 });
 
 // --- Détection du clic dans la liste du panneau latéral ---
@@ -1965,6 +2251,200 @@ function exporterProjet() {
   URL.revokeObjectURL(url);
 }
 document.getElementById('exporter-projet').addEventListener('click', exporterProjet);
+
+// ============================================================
+// NOUVEAU — EXPORT PDF DU RAPPORT
+// ============================================================
+// Génère une page HTML autonome (styles inclus), l'ouvre dans un
+// nouvel onglet, puis déclenche l'impression native du navigateur.
+// L'utilisateur choisit "Enregistrer en PDF" comme imprimante dans la
+// boîte de dialogue -- aucune librairie externe, aucune dépendance
+// réseau, fonctionne même hors ligne.
+
+// Petite fonction utilitaire : évite qu'un nom de matériau/type brut
+// (ex: "beton") s'affiche tel quel dans un rapport destiné à des
+// investisseurs -- transforme en "Béton", etc.
+const LIBELLES_MATERIAUX = {
+  beton: 'Béton', brique: 'Brique', bois: 'Bois', placo: 'Placo',
+  tuile: 'Tuile', tole: 'Tôle', ardoise: 'Ardoise',
+};
+function libelleMateriau(nom) {
+  return LIBELLES_MATERIAUX[nom] || nom;
+}
+
+// Construit une ligne <tr> de tableau ; évite de répéter le même
+// gabarit pour chaque catégorie d'élément ci-dessous.
+function ligneTableauRapport(colonnes) {
+  return `<tr>${colonnes.map(c => `<td>${c}</td>`).join('')}</tr>`;
+}
+
+function genererRapportHTML() {
+  const r = dernierResultat;
+  const nomProjet = typeof nomProjetActuel !== 'undefined' ? nomProjetActuel : 'Projet sans titre';
+  const dateRapport = new Date().toLocaleDateString('fr-FR', { year: 'numeric', month: 'long', day: 'numeric' });
+
+  let sections = '';
+
+  // --- Murs et cloisons ---
+  if (etat.murs.length > 0) {
+    const lignes = etat.murs.map(mur => {
+      const res = r.murs.find(m => m.id === mur.id) || {};
+      const type = mur.porteur === false ? 'Cloison' : 'Mur porteur';
+      return ligneTableauRapport([
+        type,
+        `${mur.longueur.toFixed(2)} × ${mur.hauteur.toFixed(2)} × ${mur.epaisseur.toFixed(2)} m`,
+        libelleMateriau(mur.materiau),
+        `${(res.volume_m3 ?? 0).toFixed(3)} m³`,
+        `${(res.cout_total_eur ?? 0).toFixed(2)} €`,
+      ]);
+    }).join('');
+    sections += `<h2>Murs &amp; cloisons</h2>
+      <table><thead><tr><th>Type</th><th>Dimensions (L×H×É)</th><th>Matériau</th><th>Volume</th><th>Coût</th></tr></thead>
+      <tbody>${lignes}</tbody></table>`;
+  }
+
+  // --- Soubassements (dérivés, pas stockés dans etat -- on les lit
+  // directement depuis le dernier résultat calculé) ---
+  if (r.soubassements && r.soubassements.length > 0) {
+    const lignes = r.soubassements.map(s => ligneTableauRapport([
+      `Soubassement du mur ${s.mur_id}`,
+      `hauteur ${s.hauteur_m.toFixed(2)} m, épaisseur ${s.epaisseur_m.toFixed(2)} m`,
+      'Béton',
+      `${s.volume_m3.toFixed(3)} m³`,
+      `${s.cout_total_eur.toFixed(2)} €`,
+    ])).join('');
+    sections += `<h2>Soubassements (fondations automatiques)</h2>
+      <table><thead><tr><th>Élément</th><th>Dimensions</th><th>Matériau</th><th>Volume</th><th>Coût</th></tr></thead>
+      <tbody>${lignes}</tbody></table>`;
+  }
+
+  // --- Dalles ---
+  if (etat.dalles.length > 0) {
+    const lignes = etat.dalles.map(dalle => {
+      const res = r.dalles.find(d => d.id === dalle.id) || {};
+      return ligneTableauRapport([
+        `${dalle.longueur.toFixed(2)} × ${dalle.largeur.toFixed(2)} × ${dalle.epaisseur.toFixed(2)} m`,
+        libelleMateriau(dalle.materiau),
+        `${(res.surface_m2 ?? 0).toFixed(2)} m²`,
+        `${(res.volume_m3 ?? 0).toFixed(3)} m³`,
+        `${(res.cout_total_eur ?? 0).toFixed(2)} €`,
+      ]);
+    }).join('');
+    sections += `<h2>Dalles</h2>
+      <table><thead><tr><th>Dimensions</th><th>Matériau</th><th>Surface</th><th>Volume</th><th>Coût</th></tr></thead>
+      <tbody>${lignes}</tbody></table>`;
+  }
+
+  // --- Poteaux ---
+  if (etat.poteaux.length > 0) {
+    const lignes = etat.poteaux.map(poteau => {
+      const res = r.poteaux.find(p => p.id === poteau.id) || {};
+      return ligneTableauRapport([
+        `${poteau.cote.toFixed(2)} × ${poteau.cote.toFixed(2)} × ${poteau.hauteur.toFixed(2)} m`,
+        libelleMateriau(poteau.materiau),
+        `${(res.volume_m3 ?? 0).toFixed(3)} m³`,
+        `${(res.cout_total_eur ?? 0).toFixed(2)} €`,
+      ]);
+    }).join('');
+    sections += `<h2>Poteaux</h2>
+      <table><thead><tr><th>Dimensions</th><th>Matériau</th><th>Volume</th><th>Coût</th></tr></thead>
+      <tbody>${lignes}</tbody></table>`;
+  }
+
+  // --- Toits ---
+  if (etat.toits.length > 0) {
+    const lignes = etat.toits.map(toit => {
+      const res = r.toits.find(t => t.id === toit.id) || {};
+      return ligneTableauRapport([
+        `${toit.longueur.toFixed(2)} × ${toit.largeur.toFixed(2)} m, pente ${toit.pente_degres}°`,
+        libelleMateriau(toit.materiau),
+        `${(res.surface_m2 ?? 0).toFixed(2)} m²`,
+        `${(res.cout_total_eur ?? 0).toFixed(2)} €`,
+      ]);
+    }).join('');
+    sections += `<h2>Toiture</h2>
+      <table><thead><tr><th>Dimensions</th><th>Matériau</th><th>Surface réelle</th><th>Coût</th></tr></thead>
+      <tbody>${lignes}</tbody></table>`;
+  }
+
+  // --- Électricité (résumé, pas ligne par ligne -- lot symbolique) ---
+  if (etat.elements_electriques.length > 0 || etat.tableau_electrique) {
+    const compte = { prise: 0, interrupteur: 0, point_lumineux: 0 };
+    etat.elements_electriques.forEach(e => { if (compte[e.type] !== undefined) compte[e.type]++; });
+    const coutElec = r.elements_electriques.reduce((s, e) => s + e.cout_eur, 0)
+      + (etat.tableau_electrique ? 450 : 0);
+    sections += `<h2>Électricité <span class="note-rapport">(lot symbolique, hors dimensionnement de circuits)</span></h2>
+      <table><thead><tr><th>Prises</th><th>Interrupteurs</th><th>Points lumineux</th><th>Tableau électrique</th><th>Coût</th></tr></thead>
+      <tbody>${ligneTableauRapport([
+        compte.prise, compte.interrupteur, compte.point_lumineux,
+        etat.tableau_electrique ? 'Oui' : 'Non',
+        `${coutElec.toFixed(2)} €`,
+      ])}</tbody></table>`;
+  }
+
+  return `<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Rapport HCOSMO — ${nomProjet}</title>
+<style>
+  body { font-family: 'Segoe UI', Arial, sans-serif; color: #1a1a1a; margin: 40px; }
+  h1 { font-size: 22px; margin-bottom: 2px; }
+  .sous-titre { color: #666; font-size: 13px; margin-bottom: 28px; }
+  h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; color: #5B4FE8;
+       border-bottom: 1px solid #ddd; padding-bottom: 4px; margin-top: 26px; }
+  .note-rapport { font-size: 11px; color: #888; text-transform: none; letter-spacing: normal; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px; }
+  th { text-align: left; background: #f2f1fb; padding: 6px 8px; border-bottom: 2px solid #ddd; }
+  td { padding: 6px 8px; border-bottom: 1px solid #eee; }
+  .total-box { margin-top: 30px; padding: 16px 20px; background: #f2f1fb; border-radius: 8px; }
+  .total-box h2 { border: none; margin-top: 0; }
+  .ligne-total { display: flex; justify-content: space-between; font-size: 13px; padding: 3px 0; }
+  .ligne-total.principal { font-size: 17px; font-weight: bold; color: #3E35B0; margin-top: 6px; }
+  @media print {
+    body { margin: 15mm; }
+    h2 { break-after: avoid; }
+    table { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+  <h1>HCOSMO — Rapport de projet</h1>
+  <div class="sous-titre">${nomProjet} — généré le ${dateRapport} — prototype de preuve de concept</div>
+
+  ${sections || '<p>Projet vide -- aucun élément à afficher.</p>'}
+
+  <div class="total-box">
+    <h2>Total projet</h2>
+    <div class="ligne-total"><span>Éléments</span><span>${r.total.nb_murs} murs/cloisons · ${r.total.nb_dalles} dalles · ${r.total.nb_poteaux} poteaux · ${r.total.nb_toits} toits</span></div>
+    <div class="ligne-total"><span>Surface habitable</span><span>${r.total.surface_habitable_m2.toFixed(2)} m²</span></div>
+    <div class="ligne-total"><span>Volume total</span><span>${r.total.volume_m3.toFixed(3)} m³</span></div>
+    <div class="ligne-total"><span>Poids total</span><span>${r.total.poids_kg.toFixed(1)} kg</span></div>
+    <div class="ligne-total principal"><span>Coût total estimé</span><span>${r.total.cout_total_eur.toFixed(2)} €</span></div>
+  </div>
+</body>
+</html>`;
+}
+
+function exporterRapportPDF() {
+  if (!dernierResultat) {
+    alert('Aucun résultat calculé pour le moment.');
+    return;
+  }
+  const contenuHTML = genererRapportHTML();
+  const fenetreRapport = window.open('', '_blank');
+  if (!fenetreRapport) {
+    alert("Le navigateur a bloqué l'ouverture du rapport (bloqueur de pop-up). Autorisez les pop-ups pour ce site puis réessayez.");
+    return;
+  }
+  fenetreRapport.document.write(contenuHTML);
+  fenetreRapport.document.close();
+  // Petit délai avant d'appeler print() : laisse le temps au nouvel
+  // onglet de terminer son rendu, sinon l'aperçu d'impression peut
+  // apparaître vide sur certains navigateurs.
+  setTimeout(() => fenetreRapport.print(), 300);
+}
+document.getElementById('exporter-pdf').addEventListener('click', exporterRapportPDF);
 
 // ============================================================
 // OUVRIR UN PROJET (.hcosmo) — sélection de fichier, validation,

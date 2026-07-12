@@ -3,7 +3,7 @@ html, body {
   height: 100%;
   overflow: hidden;
   font-family: sans-serif;
-  background: #1e1e1e;
+  background: #14151f;
   color: #ddd;
 }
 
@@ -18,21 +18,37 @@ html, body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  background: radial-gradient(circle at 50% 30%, #23262b 0%, #15171a 70%);
+  /* flex-start + padding plutôt que justify-content:center : un centrage
+     vertical classique coupe le haut du contenu dès qu'il dépasse la
+     fenêtre et devient inaccessible au défilement -- bug connu de
+     flexbox. Le padding donne un rendu visuellement centré tant que ça
+     tient à l'écran, et défile proprement dès que ça ne tient plus
+     (6 cartes de modules + logo, ça arrive vite sur un petit écran). */
+  justify-content: flex-start;
+  overflow-y: auto;
+  padding: 60px 20px;
+  box-sizing: border-box;
+  background: radial-gradient(circle at 50% 30%, #181b28 0%, #0a0c14 70%);
 }
 #ecran-accueil.cachee { display: none; }
 
 .logo-accueil {
-  font-size: 48px;
+  width: 340px;
+  max-width: 70vw;
+  margin-bottom: 6px;
+}
+.logo-accueil img { width: 100%; height: auto; display: block; }
+.logo-accueil-secours {
+  display: none; /* affiché par onerror uniquement si l'image ne charge pas */
+  font-size: 40px;
   font-weight: bold;
   letter-spacing: 6px;
   color: #ffffff;
-  margin-bottom: 6px;
+  text-align: center;
 }
 
 .sous-titre-accueil {
-  color: #9acfff;
+  color: #B7AEFF;
   font-size: 14px;
   margin-bottom: 36px;
   opacity: 0.85;
@@ -52,7 +68,7 @@ html, body {
   padding: 26px 16px;
   border-radius: 12px;
   border: 2px solid #333;
-  background: #232326;
+  background: #181a25;
   color: #ddd;
   font-family: inherit;
   cursor: pointer;
@@ -60,7 +76,7 @@ html, body {
 }
 
 .carte-module.actif:hover {
-  border-color: #2266cc;
+  border-color: #5B4FE8;
   background: #2a2d33;
   transform: translateY(-3px);
 }
@@ -94,20 +110,32 @@ html, body {
   align-items: center;
   gap: 14px;
   padding: 0 12px;
-  background: #2d2d30;
+  background: #1b1d2b;
   border-bottom: 1px solid #111;
   box-sizing: border-box;
 }
 
 #logo-mini {
-  font-weight: bold;
-  letter-spacing: 1px;
-  color: #fff;
-  padding: 6px 10px;
+  width: 30px;
+  height: 30px;
+  padding: 3px;
   border-radius: 6px;
   cursor: pointer;
   flex: 0 0 auto;
-  font-size: 13px;
+  box-sizing: border-box;
+}
+#logo-mini img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.logo-mini-secours {
+  display: none; /* affiché par onerror uniquement si l'image ne charge pas */
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  background: #5B4FE8;
+  color: white;
+  font-weight: bold;
+  font-size: 11px;
+  border-radius: 4px;
 }
 #logo-mini:hover { background: #3c3c3c; }
 
@@ -131,7 +159,7 @@ html, body {
   flex: 0 0 auto;
 }
 .outil-dessin:hover { background: #464646; }
-.outil-dessin.actif { background: #2266cc; color: white; border-color: #2266cc; }
+.outil-dessin.actif { background: #5B4FE8; color: white; border-color: #5B4FE8; }
 
 #actions-vue {
   display: flex;
@@ -154,13 +182,13 @@ html, body {
   cursor: not-allowed;
 }
 #actions-vue button:disabled:hover { background: #444; }
-#toggle-vue { background: #2266cc; }
-#toggle-vue:hover { background: #1a4d99; }
-#toggle-ia.actif { background: #7a3ccc; }
+#toggle-vue { background: #5B4FE8; }
+#toggle-vue:hover { background: #3E35B0; }
+#toggle-ia.actif { background: #6A5CF0; }
 
 /* NOUVEAU — Nom du projet affiché dans la barre du haut */
 #nom-projet-affiche {
-  color: #9acfff;
+  color: #B7AEFF;
   font-size: 12px;
   opacity: 0.85;
   flex: 0 0 auto;
@@ -183,7 +211,7 @@ html, body {
 #modal-nouveau-projet.cachee { display: none; }
 
 #modal-nouveau-projet-boite {
-  background: #232326;
+  background: #181a25;
   border: 1px solid #444;
   border-radius: 10px;
   padding: 22px;
@@ -197,7 +225,7 @@ html, body {
   padding: 9px 10px;
   border-radius: 6px;
   border: 1px solid #555;
-  background: #1a1a1a;
+  background: #121319;
   color: #eee;
   box-sizing: border-box;
   font-size: 13px;
@@ -236,7 +264,7 @@ html, body {
 #modal-aide.cachee { display: none; }
 
 #modal-aide-boite {
-  background: #232326;
+  background: #181a25;
   border: 1px solid #444;
   border-radius: 10px;
   padding: 22px;
@@ -254,10 +282,10 @@ html, body {
   margin: 0 0 12px 0;
 }
 #contenu-aide code {
-  background: #1a1a1a;
+  background: #121319;
   padding: 1px 5px;
   border-radius: 3px;
-  color: #9acfff;
+  color: #B7AEFF;
 }
 
 #modal-aide-actions {
@@ -280,7 +308,7 @@ html, body {
 #modal-apercu.cachee { display: none; }
 
 #modal-apercu-boite {
-  background: #232326;
+  background: #181a25;
   border: 1px solid #444;
   border-radius: 10px;
   padding: 22px;
@@ -297,7 +325,7 @@ html, body {
   color: #ccc;
   margin: 0 0 12px 0;
 }
-#modal-apercu-contenu strong { color: #cfe8ff; }
+#modal-apercu-contenu strong { color: #DAD3FF; }
 
 #modal-apercu-actions {
   margin-top: 12px;
@@ -315,7 +343,7 @@ html, body {
 #barre-activite {
   flex: 0 0 48px;
   width: 48px;
-  background: #252526;
+  background: #191a23;
   border-right: 1px solid #111;
   display: flex;
   flex-direction: column;
@@ -335,13 +363,32 @@ html, body {
   border-radius: 6px;
 }
 .icone-activite:hover { background: #37373d; }
-.icone-activite.actif { background: #37373d; box-shadow: inset 3px 0 0 #2266cc; }
+.icone-activite.actif { background: #37373d; box-shadow: inset 3px 0 0 #5B4FE8; }
+
+/* NOUVEAU — icône d'action dans la barre étroite (pas une bascule de
+   section, donc volontairement une classe séparée de .icone-activite,
+   pour ne pas être capturée par le listener qui bascule les sections
+   du panneau) */
+.icone-barre-laterale {
+  width: 38px;
+  height: 38px;
+  border: none;
+  background: transparent;
+  color: #ccc;
+  font-size: 17px;
+  cursor: pointer;
+  border-radius: 6px;
+  margin-top: 12px;
+  border-top: 1px solid #333;
+  padding-top: 12px;
+}
+.icone-barre-laterale:hover { background: #37373d; }
 
 /* --- Panneau latéral --- */
 #panneau {
   flex: 0 0 280px;
   width: 280px;
-  background: #1a1a1a;
+  background: #121319;
   overflow-y: auto;
   padding: 16px;
   box-sizing: border-box;
@@ -356,7 +403,7 @@ html, body {
   font-size: 13px;
   text-transform: uppercase;
   letter-spacing: 1px;
-  color: #9acfff;
+  color: #B7AEFF;
   border-top: 1px solid rgba(255,255,255,0.15);
   padding-top: 12px;
 }
@@ -439,7 +486,7 @@ html, body {
   align-items: center;
   margin-bottom: 6px;
 }
-.entete-element .nom-element { font-weight: bold; color: #cfe8ff; }
+.entete-element .nom-element { font-weight: bold; color: #DAD3FF; }
 .entete-element .valeurs-element { opacity: 0.8; font-size: 11px; }
 
 .bouton-supprimer {
@@ -467,7 +514,7 @@ html, body {
 
 /* --- Résultats --- */
 #resultats { font-size: 13px; }
-.section-total strong { color: #9acfff; }
+.section-total strong { color: #B7AEFF; }
 .ligne-resultat { display: flex; justify-content: space-between; padding: 2px 0; }
 .ligne-resultat .label { opacity: 0.75; }
 #resultats span[id] { font-weight: bold; color: #9aff9a; }
@@ -512,6 +559,11 @@ html, body {
 }
 
 #statut {
+  /* Masqué à la demande : le message flottant gênait la vue pendant la
+     démo. La logique JS qui le met à jour (connexion, erreurs de
+     validation) reste intacte -- juste invisible. Remettre "block" ici
+     si besoin de redéboguer une connexion pendant les répétitions. */
+  display: none;
   position: absolute;
   bottom: 14px;
   right: 14px;
@@ -527,7 +579,7 @@ html, body {
 #panneau-ia {
   flex: 0 0 300px;
   width: 300px;
-  background: #1a1a1a;
+  background: #121319;
   border-left: 1px solid #111;
   padding: 16px;
   box-sizing: border-box;
@@ -535,7 +587,7 @@ html, body {
   flex-direction: column;
 }
 #panneau-ia.cachee { display: none; }
-#panneau-ia h3 { margin: 0 0 6px 0; font-size: 14px; color: #cbb2ff; }
+#panneau-ia h3 { margin: 0 0 6px 0; font-size: 14px; color: #C9C3FF; }
 
 #chat-ia-placeholder {
   flex: 1 1 auto;
@@ -546,7 +598,7 @@ html, body {
   gap: 8px;
 }
 .message-ia {
-  background: #2d2d30;
+  background: #1b1d2b;
   padding: 10px 12px;
   border-radius: 8px;
   font-size: 12.5px;
@@ -559,7 +611,7 @@ html, body {
   padding: 9px 10px;
   border-radius: 6px;
   border: 1px solid #444;
-  background: #232326;
+  background: #181a25;
   color: #888;
   box-sizing: border-box;
   font-size: 12px;
@@ -578,7 +630,7 @@ html, body {
   padding: 4px 6px;
   background: #3c3c3c;
   border: 1px solid #555;
-  color: #cfe8ff;
+  color: #DAD3FF;
   border-radius: 4px;
   font-size: 11px;
   cursor: pointer;

@@ -64,9 +64,10 @@ PRIX_PORTE_EUR = 280
 # Le toit se chiffre au m² de couverture réelle (pas au m³ comme un mur),
 # c'est l'usage du métier : on parle de "prix au m² de couverture".
 MATERIAUX_TOIT = {
-    "tuile": {"prix_eur_m2": 45, "poids_kg_m2": 40},
-    "tole":  {"prix_eur_m2": 25, "poids_kg_m2": 12},
-    "beton": {"prix_eur_m2": 60, "poids_kg_m2": 300},  # toit-terrasse
+    "tuile":   {"prix_eur_m2": 45, "poids_kg_m2": 40},
+    "tole":    {"prix_eur_m2": 25, "poids_kg_m2": 12},
+    "ardoise": {"prix_eur_m2": 85, "poids_kg_m2": 35},  # NOUVEAU -- ardoise naturelle, matériau réel courant en toiture haut de gamme
+    "beton":   {"prix_eur_m2": 60, "poids_kg_m2": 300},  # toit-terrasse
 }
 
 # --- NOUVEAU : lot électrique (forfaits fourniture + pose, valeurs indicatives) ---
@@ -155,9 +156,10 @@ class Toit(BaseModel):
     longueur: float = Field(gt=0, le=50)
     largeur: float = Field(gt=0, le=30)
     pente_degres: float = Field(ge=0, le=60)
-    materiau: str                        # "tuile" | "tole" | "beton"
+    materiau: str                        # "tuile" | "tole" | "ardoise" | "beton"
     positionX: float = 0
     positionZ: float = 0
+    rotationY: float = 0                 # NOUVEAU -- orientation en radians, comme les murs
 
 
 # ---------------------------------------------------------------
@@ -294,21 +296,25 @@ def calculer_projet(params: ProjetParametres):
         total_poids += poids
         total_cout += cout
 
-    # --- Dalles (inchangé) ---
+    # --- Dalles (+ NOUVEAU : surface au sol, utilisée comme "surface habitable") ---
     resultats_dalles = []
+    total_surface_habitable = 0.0  # NOUVEAU
     for dalle in params.dalles:
         materiau_info = MATERIAUX.get(dalle.materiau, MATERIAUX["beton"])
-        volume = dalle.longueur * dalle.largeur * dalle.epaisseur
+        surface = dalle.longueur * dalle.largeur  # NOUVEAU
+        volume = surface * dalle.epaisseur
         poids = volume * materiau_info["densite_kg_m3"]
         cout = volume * materiau_info["prix_eur_m3"]
         resultats_dalles.append({
             "id": dalle.id, "volume_m3": round(volume, 3),
+            "surface_m2": round(surface, 2),  # NOUVEAU
             "poids_kg": round(poids, 1), "cout_total_eur": round(cout, 2),
             "couleur_hex": materiau_info["couleur_hex"],
         })
         total_volume += volume
         total_poids += poids
         total_cout += cout
+        total_surface_habitable += surface  # NOUVEAU
 
     # --- Poteaux (inchangé) ---
     resultats_poteaux = []
@@ -370,6 +376,7 @@ def calculer_projet(params: ProjetParametres):
         "elements_electriques": resultats_electricite,  # NOUVEAU
         "total": {
             "volume_m3": round(total_volume, 3),
+            "surface_habitable_m2": round(total_surface_habitable, 2),  # NOUVEAU
             "poids_kg": round(total_poids, 1),
             "cout_total_eur": round(total_cout, 2),
             "nb_murs": len(params.murs),

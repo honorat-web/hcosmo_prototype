@@ -147,3 +147,47 @@ def test_fenetre_de_taille_valide_toujours_acceptee():
         "portes": [], "toits": [], "elements_electriques": [], "tableau_electrique": False
     })
     assert reponse.status_code == 200
+
+
+# ---------------------------------------------------------------
+# NOUVEAU : toiture ardoise + rotation du toit
+# ---------------------------------------------------------------
+
+def test_toit_ardoise_prix_correct():
+    """Ardoise 6 x 5m, pente 0° -> surface 30 m2, coût = 30 x 85 = 2550 €
+    (matériau réel ajouté en plus de tuile/tôle/béton)."""
+    reponse = client.post("/api/calculer-projet", json={
+        "murs": [], "dalles": [], "poteaux": [], "fenetres": [], "portes": [],
+        "toits": [{
+            "id": "toit-1", "longueur": 6.0, "largeur": 5.0,
+            "pente_degres": 0, "materiau": "ardoise", "positionX": 0, "positionZ": 0
+        }],
+        "elements_electriques": [], "tableau_electrique": False
+    })
+    data = reponse.json()
+    assert data["toits"][0]["surface_m2"] == 30.0
+    assert data["toits"][0]["cout_total_eur"] == 30.0 * 85
+
+
+def test_toit_rotation_nexiste_pas_par_defaut_et_naffecte_pas_le_calcul():
+    """rotationY est un champ purement géométrique/visuel : qu'il soit
+    omis (défaut 0) ou renseigné à 90°, la surface et le coût doivent
+    rester identiques (tourner un rectangle ne change pas son aire)."""
+    base = {
+        "murs": [], "dalles": [], "poteaux": [], "fenetres": [], "portes": [],
+        "elements_electriques": [], "tableau_electrique": False
+    }
+    sans_rotation = {**base, "toits": [{
+        "id": "toit-1", "longueur": 6.0, "largeur": 5.0,
+        "pente_degres": 20, "materiau": "tuile", "positionX": 0, "positionZ": 0
+    }]}
+    avec_rotation = {**base, "toits": [{
+        "id": "toit-1", "longueur": 6.0, "largeur": 5.0,
+        "pente_degres": 20, "materiau": "tuile", "positionX": 0, "positionZ": 0,
+        "rotationY": 1.5708  # ~90°
+    }]}
+    data_sans = client.post("/api/calculer-projet", json=sans_rotation).json()
+    data_avec = client.post("/api/calculer-projet", json=avec_rotation).json()
+    assert data_sans["toits"][0]["surface_m2"] == data_avec["toits"][0]["surface_m2"]
+    assert data_sans["toits"][0]["cout_total_eur"] == data_avec["toits"][0]["cout_total_eur"]
+
