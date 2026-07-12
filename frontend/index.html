@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>HCOSMO — Prototype</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ============================================================
+       ÉCRAN D'ACCUEIL — choix du domaine. Seule "Modélisation 3D / BIM"
+       est réellement fonctionnelle aujourd'hui ; les autres sont
+       affichées pour montrer la vision complète HCOSMO, mais marquées
+       explicitement "bientôt disponible" (honnêteté envers les
+       investisseurs : rien n'est caché ni survendu).
+       ============================================================ -->
+  <div id="ecran-accueil">
+    <div class="logo-accueil">HCOSMO</div>
+    <p class="sous-titre-accueil">Choisissez un domaine pour commencer</p>
+
+    <div id="grille-modules">
+      <button class="carte-module actif" data-module="bim">
+        <span class="icone-module">🏗️</span>
+        <span class="nom-module">Modélisation 3D / BIM</span>
+        <span class="etat-module">Disponible</span>
+      </button>
+
+      <button class="carte-module verrouille" data-module="mecanique">
+        <span class="icone-module">⚙️</span>
+        <span class="nom-module">Mécanique / CAO</span>
+        <span class="etat-module">🔒 Bientôt disponible</span>
+      </button>
+
+      <button class="carte-module verrouille" data-module="electronique">
+        <span class="icone-module">🔋</span>
+        <span class="nom-module">Électronique</span>
+        <span class="etat-module">🔒 Bientôt disponible</span>
+      </button>
+
+      <button class="carte-module verrouille" data-module="simulation">
+        <span class="icone-module">📊</span>
+        <span class="nom-module">Simulation / FEA</span>
+        <span class="etat-module">🔒 Bientôt disponible</span>
+      </button>
+
+      <button class="carte-module verrouille" data-module="ia">
+        <span class="icone-module">🤖</span>
+        <span class="nom-module">Intelligence Artificielle</span>
+        <span class="etat-module">🔒 Bientôt disponible</span>
+      </button>
+
+      <button class="carte-module verrouille" data-module="cloud">
+        <span class="icone-module">☁️</span>
+        <span class="nom-module">Collaboration Cloud</span>
+        <span class="etat-module">🔒 Bientôt disponible</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       APPLICATION — masquée tant qu'aucun module n'est choisi.
+       Structure façon VS Code : barre du haut, barre d'activité
+       étroite à gauche, panneau latéral, zone de travail centrale,
+       panneau IA repliable à droite.
+       ============================================================ -->
+  <div id="app-shell" class="cachee">
+
+    <!-- Barre supérieure : logo + outils de construction + actions de vue -->
+    <div id="barre-superieure">
+      <div id="logo-mini" title="Retour à l'accueil">HCOSMO</div>
+      <span id="nom-projet-affiche">Projet sans titre</span>
+
+      <div id="barre-dessin">
+        <button class="outil-dessin" data-mode="dalle">▭ Dalle</button>
+        <button class="outil-dessin" data-mode="mur">✏️ Mur</button>
+        <button class="outil-dessin" data-mode="cloison">🧱 Cloison</button>
+        <button class="outil-dessin" data-mode="poteau">📍 Poteau</button>
+        <button class="outil-dessin" data-mode="fenetre">🪟 Fenêtre</button>
+        <button class="outil-dessin" data-mode="porte">🚪 Porte</button>
+        <button class="outil-dessin" data-mode="toit">🏠 Toit</button>
+        <button class="outil-dessin" data-mode="prise">🔌 Prise</button>
+        <button class="outil-dessin" data-mode="interrupteur">💡 Interrupteur</button>
+        <button class="outil-dessin" data-mode="point_lumineux">🔆 Point lumineux</button>
+        <button class="outil-dessin" data-mode="">✋ Arrêter</button>
+      </div>
+
+      <div id="actions-vue">
+        <button id="bouton-annuler" title="Annuler (Ctrl+Z)" disabled>↶</button>
+        <button id="bouton-refaire" title="Rétablir (Ctrl+Y)" disabled>↷</button>
+        <button id="ouvrir-nouveau-projet">🆕 Nouveau projet</button>
+        <button id="toggle-vue">Voir le plan 2D</button>
+        <button id="cadrer-vue">🎯 Cadrer</button>
+        <button id="toggle-ia">🤖 IA</button>
+        <button id="ouvrir-aide">❓ Aide</button>
+      </div>
+    </div>
+
+    <!-- NOUVEAU — Modal "Nouveau projet" : masqué par défaut -->
+    <div id="modal-nouveau-projet" class="cachee">
+      <div id="modal-nouveau-projet-boite">
+        <h3>🆕 Nouveau projet</h3>
+        <p class="note-panneau">Le projet actuel sera remplacé par un plateau vide. Cette action est irréversible.</p>
+        <input type="text" id="champ-nom-nouveau-projet" placeholder="Nom du projet" maxlength="60">
+        <div id="modal-nouveau-projet-actions">
+          <button id="annuler-nouveau-projet" class="bouton-secondaire-modal">Annuler</button>
+          <button id="confirmer-nouveau-projet" class="bouton-danger-modal">Créer</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- NOUVEAU — Modal "Aide" : contenu explicatif statique, facile à
+         mettre à jour (il suffit d'éditer le texte ci-dessous, aucune
+         logique JS n'en dépend) -->
+    <div id="modal-aide" class="cachee">
+      <div id="modal-aide-boite">
+        <h3>❓ Aide — Prise en main d'HCOSMO</h3>
+        <div id="contenu-aide">
+          <p><strong>1. Créer un projet</strong><br>
+          Cliquez sur "Voir le plan 2D", choisissez un outil dans la barre
+          (Dalle, Mur, Poteau, Fenêtre, Porte, Toit...) puis cliquez sur le
+          plan pour poser vos éléments. Le plateau démarre toujours vide —
+          à vous de construire.</p>
+
+          <p><strong>2. Régler les dimensions</strong><br>
+          Les tailles par défaut (hauteur de mur, épaisseur, matériau...)
+          se règlent dans le panneau ⚙️ avant de dessiner. Chaque élément
+          posé reste ensuite modifiable individuellement dans le panneau 📋.</p>
+
+          <p><strong>3. Enregistrer votre projet</strong><br>
+          Bouton "💾 Exporter le projet" : télécharge un fichier
+          <code>.hcosmo</code> contenant tout votre projet.</p>
+
+          <p><strong>4. Ouvrir un projet existant</strong><br>
+          Bouton "📂 Ouvrir un projet" : sélectionnez un fichier
+          <code>.hcosmo</code> précédemment enregistré pour reprendre où
+          vous en étiez.</p>
+
+          <p><strong>5. Visualiser</strong><br>
+          "🎯 Cadrer" recentre la caméra sur tout ce que vous avez construit.
+          Basculez entre la vue 3D et le plan 2D avec le bouton en haut à droite.</p>
+
+          <p><strong>6. Raccourcis clavier</strong><br>
+          <code>Ctrl</code> + <code>Z</code> — annuler la dernière action<br>
+          <code>Ctrl</code> + <code>Y</code> (ou <code>Ctrl</code> + <code>Maj</code> + <code>Z</code>) — rétablir<br>
+          <code>Ctrl</code> + <code>D</code> — duplique l'élément sélectionné (mur, dalle, poteau ou toit)<br>
+          <code>Maj</code> maintenue pendant le tracé d'un mur — accroche l'angle à 45°<br>
+          <code>Échap</code> — quitte l'outil de dessin en cours, ou ferme la fenêtre ouverte<br>
+          <code>Entrée</code> — valide le nom dans la fenêtre "Nouveau projet"</p>
+        </div>
+        <div id="modal-aide-actions">
+          <button id="fermer-aide" class="bouton-secondaire-modal">Fermer</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- NOUVEAU — Modal "Aperçu de la vision" : ouverte au clic sur une
+         carte verrouillée de l'écran d'accueil. Contenu VOLONTAIREMENT
+         honnête : décrit ce qui est PRÉVU (repris du cahier des charges),
+         jamais présenté comme fonctionnel aujourd'hui. Même structure que
+         la modale Aide (texte statique, facile à mettre à jour). -->
+    <div id="modal-apercu" class="cachee">
+      <div id="modal-apercu-boite">
+        <h3 id="modal-apercu-titre">🔒 Aperçu de la vision</h3>
+        <p class="note-panneau" id="modal-apercu-sous-titre"></p>
+        <div id="modal-apercu-contenu"></div>
+        <div id="modal-apercu-actions">
+          <button id="fermer-apercu" class="bouton-secondaire-modal">Fermer</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="corps-app">
+
+      <!-- Barre d'activité étroite (façon VS Code) : bascule quelle
+           section s'affiche dans le panneau latéral -->
+      <div id="barre-activite">
+        <button class="icone-activite actif" data-section="section-reglages" title="Réglages par défaut">⚙️</button>
+        <button class="icone-activite" data-section="section-elements" title="Éléments du projet">📋</button>
+        <button class="icone-activite" data-section="section-resultats" title="Résultats">📊</button>
+      </div>
+
+      <!-- Panneau latéral : une seule section visible à la fois -->
+      <div id="panneau">
+
+        <button id="charger-exemple" class="bouton-secondaire" style="margin-top:0;">🏡 Charger la maison exemple</button>
+
+        <!-- Section 1 : Réglages par défaut -->
+        <div id="section-reglages" class="section-panneau">
+          <h3>Réglages par défaut</h3>
+          <p class="note-panneau">Appliqués aux nouveaux éléments au moment où vous les dessinez.</p>
+
+          <div class="champ champ-inline">
+            <label>Mur — hauteur (m)</label>
+            <input type="number" id="def-mur-hauteur" value="2.5" min="1" max="6" step="0.1">
+          </div>
+          <div class="champ champ-inline">
+            <label>Mur — épaisseur (m)</label>
+            <input type="number" id="def-mur-epaisseur" value="0.2" min="0.1" max="0.6" step="0.01">
+          </div>
+          <div class="champ champ-inline">
+            <label>Mur — matériau</label>
+            <select id="def-mur-materiau">
+              <option value="beton">Béton</option>
+              <option value="brique">Brique</option>
+              <option value="bois">Bois</option>
+            </select>
+          </div>
+
+          <!-- NOUVEAU — Cloison : reprend la hauteur du mur (même hauteur
+               sous plafond), seule l'épaisseur diffère ; matériau toujours
+               placo (pas de choix, une cloison de ce prototype est toujours
+               en plaques de plâtre). -->
+          <div class="champ champ-inline">
+            <label>Cloison — épaisseur (m)</label>
+            <input type="number" id="def-cloison-epaisseur" value="0.08" min="0.05" max="0.2" step="0.01">
+          </div>
+
+          <div class="champ champ-inline">
+            <label>Dalle — épaisseur (m)</label>
+            <input type="number" id="def-dalle-epaisseur" value="0.15" min="0.1" max="0.4" step="0.01">
+          </div>
+          <div class="champ champ-inline">
+            <label>Dalle — matériau</label>
+            <select id="def-dalle-materiau">
+              <option value="beton">Béton</option>
+              <option value="brique">Brique</option>
+              <option value="bois">Bois</option>
+            </select>
+          </div>
+
+          <div class="champ champ-inline">
+            <label>Poteau — côté (m)</label>
+            <input type="number" id="def-poteau-cote" value="0.3" min="0.1" max="1" step="0.01">
+          </div>
+          <div class="champ champ-inline">
+            <label>Poteau — hauteur (m)</label>
+            <input type="number" id="def-poteau-hauteur" value="2.5" min="1" max="6" step="0.1">
+          </div>
+          <div class="champ champ-inline">
+            <label>Poteau — matériau</label>
+            <select id="def-poteau-materiau">
+              <option value="beton">Béton</option>
+              <option value="brique">Brique</option>
+              <option value="bois">Bois</option>
+            </select>
+          </div>
+
+          <div class="champ champ-inline">
+            <label>Fenêtre — largeur (m)</label>
+            <input type="number" id="def-fenetre-largeur" value="1.2" min="0.4" max="4" step="0.1">
+          </div>
+          <div class="champ champ-inline">
+            <label>Fenêtre — hauteur (m)</label>
+            <input type="number" id="def-fenetre-hauteur" value="1.2" min="0.4" max="3" step="0.1">
+          </div>
+          <div class="champ champ-inline">
+            <label>Fenêtre — appui (m)</label>
+            <input type="number" id="def-fenetre-allege" value="0.9" min="0" max="2" step="0.1">
+          </div>
+
+          <div class="champ champ-inline">
+            <label>Porte — largeur (m)</label>
+            <input type="number" id="def-porte-largeur" value="0.9" min="0.6" max="3" step="0.1">
+          </div>
+          <div class="champ champ-inline">
+            <label>Porte — hauteur (m)</label>
+            <input type="number" id="def-porte-hauteur" value="2.1" min="1.8" max="3" step="0.1">
+          </div>
+
+          <div class="champ champ-inline">
+            <label>Toit — pente (°)</label>
+            <input type="number" id="def-toit-pente" value="30" min="0" max="60" step="1">
+          </div>
+          <div class="champ champ-inline">
+            <label>Toit — matériau</label>
+            <select id="def-toit-materiau">
+              <option value="tuile">Tuile</option>
+              <option value="tole">Tôle</option>
+              <option value="beton">Béton (terrasse)</option>
+            </select>
+          </div>
+          <div class="champ champ-inline">
+            <label>Toit — hauteur support (m)</label>
+            <input type="number" id="def-toit-hauteur-support" value="2.5" min="1" max="6" step="0.1">
+          </div>
+
+          <div class="champ champ-inline">
+            <label>Tableau électrique inclus</label>
+            <input type="checkbox" id="def-tableau-electrique">
+          </div>
+        </div>
+
+        <!-- Section 2 : Éléments du projet -->
+        <div id="section-elements" class="section-panneau cachee">
+          <h3>Éléments du projet</h3>
+          <div id="liste-elements">
+            <p class="liste-vide">Aucun élément pour l'instant.</p>
+          </div>
+        </div>
+
+        <!-- Section 3 : Résultats -->
+        <div id="section-resultats" class="section-panneau cachee">
+          <div id="resultats">
+            <div class="section-resultat section-total">
+              <strong>Total projet</strong>
+              <div class="ligne-resultat"><span class="label">Éléments</span><span id="res-nb">0 mur · 0 dalle · 0 poteau · 0 fenêtre</span></div>
+              <div class="ligne-resultat"><span class="label">Volume</span><span><span id="res-volume">0</span> m³</span></div>
+              <div class="ligne-resultat"><span class="label">Poids</span><span><span id="res-poids">0</span> kg</span></div>
+              <div class="ligne-resultat"><span class="label">Coût total</span><span><span id="res-cout">0,00</span> €</span></div>
+            </div>
+
+            <button id="exporter-projet" class="bouton-secondaire">💾 Exporter le projet (.hcosmo)</button>
+            <!-- Champ de fichier caché : c'est lui qui ouvre la boîte de dialogue
+                 native, le bouton visible ne fait que le déclencher au clic. -->
+            <input type="file" id="entree-fichier-ouvrir" accept=".hcosmo" style="display:none;">
+            <button id="ouvrir-projet" class="bouton-secondaire">📂 Ouvrir un projet (.hcosmo)</button>
+            <button id="reinitialiser-projet" class="bouton-danger">🗑 Tout effacer</button>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Zone de travail centrale : accueille le canvas Three.js (ajouté
+           par script.js) en fond, et le plan 2D SVG en superposition -->
+      <div id="zone-viewport">
+        <div id="vue-2d" class="cachee">
+          <svg id="svg-plan" viewBox="0 0 400 400"></svg>
+        </div>
+        <div id="instruction-dessin">Choisissez un outil ci-dessus pour commencer.</div>
+        <div id="statut">Connexion au backend...</div>
+      </div>
+
+      <!-- Panneau IA repliable — fonctionnalité à venir, affichée pour
+           montrer la vision, jamais présentée comme fonctionnelle -->
+      <div id="panneau-ia" class="cachee">
+        <h3>🤖 Assistant IA</h3>
+        <p class="note-panneau">Fonctionnalité à venir. L'assistant IA d'HCOSMO guidera la modélisation, détectera les incohérences et répondra aux questions techniques directement dans l'outil.</p>
+        <div id="chat-ia-placeholder">
+          <div class="message-ia">Bonjour ! Je suis l'assistant IA d'HCOSMO — cette fonctionnalité arrive dans une prochaine version du prototype.</div>
+        </div>
+        <input type="text" id="entree-ia" placeholder="Poser une question... (bientôt disponible)" disabled>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
