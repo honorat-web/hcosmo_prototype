@@ -574,34 +574,146 @@ function creerMeshToit(toit) {
   return mesh;
 }
 
-// NOUVEAU — Éléments électriques : petits marqueurs sphériques symboliques.
-// Prise/interrupteur sont posés sur un mur (comme les fenêtres), le point
-// lumineux est posé librement (comme un poteau), au plafond.
+// NOUVEAU — Éléments électriques avec des formes réalistes :
+// - Prise / interrupteur : une plaque murale plate, MONTÉE EN SAILLIE
+//   sur la face du mur (pas au centre de son épaisseur comme avant --
+//   c'était le bug signalé : l'appareil semblait "dans" le mur au lieu
+//   d'être dessus).
+// - Point lumineux : 4 formes possibles selon sa categorie_lampe.
 const COULEURS_ELECTRICITE = { prise: 0xffcc00, interrupteur: 0xffffff, point_lumineux: 0xfff59d };
 
+// Vecteur perpendiculaire à la longueur du mur (sa "normale"), dans le
+// plan horizontal -- sert à sortir un appareil de la face du mur au
+// lieu de le laisser au centre de son épaisseur. Même convention de
+// rotation que directionMur (voir coinsMurPixels) : tourner (dx,dz)
+// de 90° donne (-dz, dx).
+function normaleMur(mur) {
+  const d = directionMur(mur);
+  return { nx: -d.dz, nz: d.dx };
+}
+
+function creerMeshPrise(mur, centreX, centreZ, hauteur) {
+  const n = normaleMur(mur);
+  const epaisseurPlaque = 0.012;
+  const decalage = mur.epaisseur / 2 + epaisseurPlaque / 2; // juste au ras de la face du mur, pas dedans
+
+  const groupe = new THREE.Group();
+  groupe.position.set(centreX + n.nx * decalage, hauteur, centreZ + n.nz * decalage);
+  groupe.rotation.y = mur.rotationY;
+
+  const materiauPlaque = new THREE.MeshStandardMaterial({ color: 0xf1ede4, roughness: 0.5 });
+  const plaque = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, epaisseurPlaque), materiauPlaque);
+  groupe.add(plaque);
+
+  // 2 alvéoles rondes (simplification d'une vraie prise française, qui
+  // a aussi une terre centrale -- suffisant pour la lisibilité à
+  // l'échelle du prototype)
+  const materiauTrou = new THREE.MeshStandardMaterial({ color: 0x2a2a2a });
+  [-0.015, 0.015].forEach(dx => {
+    const trou = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.006, 12), materiauTrou);
+    trou.rotation.x = Math.PI / 2; // couche le cylindre pour que son axe sorte de la plaque
+    trou.position.set(dx, 0, epaisseurPlaque / 2);
+    groupe.add(trou);
+  });
+
+  return groupe;
+}
+
+function creerMeshInterrupteur(mur, centreX, centreZ, hauteur) {
+  const n = normaleMur(mur);
+  const epaisseurPlaque = 0.012;
+  const decalage = mur.epaisseur / 2 + epaisseurPlaque / 2;
+
+  const groupe = new THREE.Group();
+  groupe.position.set(centreX + n.nx * decalage, hauteur, centreZ + n.nz * decalage);
+  groupe.rotation.y = mur.rotationY;
+
+  const materiauPlaque = new THREE.MeshStandardMaterial({ color: 0xf1ede4, roughness: 0.5 });
+  const plaque = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, epaisseurPlaque), materiauPlaque);
+  groupe.add(plaque);
+
+  // Bascule (le petit rectangle qu'on appuie) : légèrement en saillie
+  // devant la plaque, blanche pour trancher visuellement sur l'ivoire.
+  const materiauBascule = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3 });
+  const bascule = new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.045, 0.01), materiauBascule);
+  bascule.position.set(0, 0, epaisseurPlaque / 2 + 0.005);
+  groupe.add(bascule);
+
+  return groupe;
+}
+
+// NOUVEAU — un point lumineux prend une forme différente selon sa
+// categorie_lampe, pour laisser un vrai choix visuel à l'utilisateur
+// plutôt qu'un unique marqueur générique.
+function creerMeshLampe(element) {
+  const categorie = element.categorie_lampe || 'plafonnier';
+  const groupe = new THREE.Group();
+  groupe.position.set(element.positionX, element.hauteur, element.positionZ);
+
+  const materiauMetal = new THREE.MeshStandardMaterial({ color: 0xc0c0c0, metalness: 0.6, roughness: 0.4 });
+  const materiauAmpoule = new THREE.MeshStandardMaterial({ color: 0xfff3c4, emissive: 0xfff3c4, emissiveIntensity: 0.7 });
+  const materiauAbatJour = new THREE.MeshStandardMaterial({ color: 0xe8e0d0, roughness: 0.6, side: THREE.DoubleSide });
+
+  if (categorie === 'ampoule') {
+    // Ampoule nue au bout d'un fil : la plus sommaire des 4 formes,
+    // typique d'un local technique ou d'un chantier pas fini.
+    const fil = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.15, 6), materiauMetal);
+    fil.position.y = 0.075;
+    groupe.add(fil);
+    groupe.add(new THREE.Mesh(new THREE.SphereGeometry(0.06, 12, 12), materiauAmpoule));
+
+  } else if (categorie === 'suspension') {
+    // Suspension : abat-jour conique qui pend au bout d'un câble --
+    // décalée SOUS le plafond, contrairement au plafonnier plaqué dessus.
+    const chute = 0.4;
+    const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, chute, 6), materiauMetal);
+    cable.position.y = -chute / 2;
+    groupe.add(cable);
+    // openEnded=true : pas de fond fermé au cône, pour voir l'ampoule
+    // "dans" l'abat-jour plutôt qu'un cône plein sans lumière visible.
+    const abatJour = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.12, 20, 1, true), materiauAbatJour);
+    abatJour.position.y = -chute;
+    groupe.add(abatJour);
+    const ampoule = new THREE.Mesh(new THREE.SphereGeometry(0.03, 10, 10), materiauAmpoule);
+    ampoule.position.y = -chute + 0.025;
+    groupe.add(ampoule);
+
+  } else if (categorie === 'spot') {
+    // Spot encastré : quasi affleurant au plafond, juste une collerette
+    // fine qui dépasse -- look "faux plafond avec spots" très courant.
+    const collerette = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.055, 0.055, 0.015, 20),
+      new THREE.MeshStandardMaterial({ color: 0xffffff })
+    );
+    groupe.add(collerette);
+    const ampoule = new THREE.Mesh(new THREE.SphereGeometry(0.02, 10, 10), materiauAmpoule);
+    ampoule.position.y = -0.015;
+    groupe.add(ampoule);
+
+  } else {
+    // 'plafonnier' (par défaut) : disque plaqué directement contre le plafond.
+    groupe.add(new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.05, 20), materiauAbatJour));
+    const ampoule = new THREE.Mesh(new THREE.SphereGeometry(0.03, 10, 10), materiauAmpoule);
+    ampoule.position.y = -0.03;
+    groupe.add(ampoule);
+  }
+
+  return groupe;
+}
+
 function creerMeshElementElectrique(element, mur) {
-  let x, y, z;
-  if (element.mur_id) {
+  if (element.type === 'prise' || element.type === 'interrupteur') {
     if (!mur) return null; // mur supprimé entre-temps
     const d = directionMur(mur);
     const debut = pointDebutMur(mur);
-    x = debut.x + d.dx * element.offset;
-    z = debut.z + d.dz * element.offset;
-    y = element.hauteur;
-  } else {
-    x = element.positionX;
-    z = element.positionZ;
-    y = element.hauteur;
+    const centreX = debut.x + d.dx * element.offset;
+    const centreZ = debut.z + d.dz * element.offset;
+    return element.type === 'prise'
+      ? creerMeshPrise(mur, centreX, centreZ, element.hauteur)
+      : creerMeshInterrupteur(mur, centreX, centreZ, element.hauteur);
   }
-  const geometrie = new THREE.SphereGeometry(0.08, 12, 12);
-  const materiau = new THREE.MeshStandardMaterial({
-    color: COULEURS_ELECTRICITE[element.type] || 0xffffff,
-    emissive: element.type === 'point_lumineux' ? 0xfff59d : 0x000000,
-    emissiveIntensity: 0.6,
-  });
-  const mesh = new THREE.Mesh(geometrie, materiau);
-  mesh.position.set(x, y, z);
-  return mesh;
+  // point_lumineux : posé librement (plafond), forme selon categorie_lampe
+  return creerMeshLampe(element);
 }
 
 // NOUVEAU — Soubassement : dérivé du mur, jamais stocké séparément.
@@ -752,6 +864,9 @@ const MATERIAUX_TOIT_SECOURS = { // NOUVEAU
   beton:   { prix_eur_m2: 60, poids_kg_m2: 300 },
 };
 const ELECTRICITE_PRIX_SECOURS = { prise: 45, interrupteur: 35, point_lumineux: 60 }; // NOUVEAU
+// NOUVEAU — prix par catégorie de lampe, miroir exact de PRIX_LAMPE_EUR
+// côté backend (main.py) -- à resynchroniser si l'un des deux change.
+const PRIX_LAMPE_SECOURS = { ampoule: 25, plafonnier: 60, suspension: 90, spot: 45 };
 const PRIX_TABLEAU_ELECTRIQUE_SECOURS = 450; // NOUVEAU
 
 // NOUVEAU — Soubassement automatique : mêmes constantes que main.py
@@ -846,10 +961,16 @@ function calculerProjetSecours() {
     };
   });
 
-  // NOUVEAU — lot électrique
-  const resultatsElectricite = etat.elements_electriques.map(e => ({
-    id: e.id, type: e.type, cout_eur: ELECTRICITE_PRIX_SECOURS[e.type] || 0,
-  }));
+  // NOUVEAU — lot électrique (le point_lumineux dépend de sa categorie_lampe)
+  const resultatsElectricite = etat.elements_electriques.map(e => {
+    const cout = e.type === 'point_lumineux'
+      ? (PRIX_LAMPE_SECOURS[e.categorie_lampe] ?? PRIX_LAMPE_SECOURS.plafonnier)
+      : (ELECTRICITE_PRIX_SECOURS[e.type] || 0);
+    return {
+      id: e.id, type: e.type, cout_eur: cout,
+      categorie_lampe: e.type === 'point_lumineux' ? (e.categorie_lampe || 'plafonnier') : null,
+    };
+  });
 
   const tousLesResultats = [...resultatsMurs, ...resultatsDalles, ...resultatsPoteaux, ...resultatsSoubassements];
   const coutStructure = tousLesResultats.reduce((s, r) => s + r.cout_total_eur, 0);
@@ -1292,11 +1413,16 @@ function rafraichirListeElements(resultat) {
 
   // NOUVEAU — Éléments électriques
   const nomsElectrique = { prise: 'Prise', interrupteur: 'Interrupteur', point_lumineux: 'Point lumineux' };
+  const nomsLampe = { ampoule: 'Ampoule nue', plafonnier: 'Plafonnier', suspension: 'Suspension', spot: 'Spot encastré' };
   etat.elements_electriques.forEach((element, i) => {
+    const libelleCategorie = element.type === 'point_lumineux'
+      ? (nomsLampe[element.categorie_lampe] || 'Plafonnier')
+      : '';
     html += `
       <div class="ligne-element" data-type="elements_electriques" data-id="${element.id}">
         <div class="entete-element">
           <span class="nom-element">${nomsElectrique[element.type] || element.type} ${i + 1}</span>
+          ${libelleCategorie ? `<span class="valeurs-element">${libelleCategorie}</span>` : ''}
           <button class="bouton-supprimer" data-action="supprimer" data-type="elements_electriques" data-id="${element.id}">✕</button>
         </div>
       </div>`;
@@ -1560,6 +1686,10 @@ const HAUTEUR_INTERRUPTEUR = 1.1;
 function lireHauteurPointLumineux() {
   return parseFloat(document.getElementById('def-toit-hauteur-support').value); // même hauteur que le plafond
 }
+// NOUVEAU — catégorie de lampe appliquée aux prochains points lumineux dessinés
+function lireCategorieLampe() {
+  return document.getElementById('def-lampe-categorie').value;
+}
 
 function definirModeDessin(nouveauMode) {
   modeDessin = nouveauMode || null;
@@ -1770,6 +1900,7 @@ document.getElementById('svg-plan').addEventListener('click', (evt) => {
       mur_id: null,
       offset: 0,
       hauteur: lireHauteurPointLumineux(),
+      categorie_lampe: lireCategorieLampe(), // NOUVEAU
       positionX: position.x, positionZ: position.z,
     });
     recalculerProjet();
@@ -2625,7 +2756,7 @@ function chargerMaisonExemple() {
   etat.elements_electriques.push({ id: genererId('prise'), type: 'prise', mur_id: idMurNord, offset: 1, hauteur: HAUTEUR_PRISE, positionX: 0, positionZ: 0 });
   etat.elements_electriques.push({ id: genererId('prise'), type: 'prise', mur_id: idMurNord, offset: 7, hauteur: HAUTEUR_PRISE, positionX: 0, positionZ: 0 });
   etat.elements_electriques.push({ id: genererId('interrupteur'), type: 'interrupteur', mur_id: idMurSud, offset: 1, hauteur: HAUTEUR_INTERRUPTEUR, positionX: 0, positionZ: 0 });
-  etat.elements_electriques.push({ id: genererId('point_lumineux'), type: 'point_lumineux', mur_id: null, offset: 0, hauteur: HAUTEUR_MUR, positionX: 0, positionZ: 0 });
+  etat.elements_electriques.push({ id: genererId('point_lumineux'), type: 'point_lumineux', mur_id: null, offset: 0, hauteur: HAUTEUR_MUR, categorie_lampe: 'suspension', positionX: 0, positionZ: 0 });
 
   cadrerApresRecalcul = true;
   recalculerProjet();
