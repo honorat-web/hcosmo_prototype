@@ -295,6 +295,19 @@
             <input type="number" id="def-toit-hauteur-support" value="2.5" min="1" max="6" step="0.1">
           </div>
 
+          <!-- NOUVEAU — Catégorie de lampe pour les prochains points
+               lumineux dessinés : chaque catégorie a une forme 3D et un
+               forfait fourniture+pose différents. -->
+          <div class="champ champ-inline">
+            <label>Point lumineux — type</label>
+            <select id="def-lampe-categorie">
+              <option value="plafonnier">Plafonnier</option>
+              <option value="suspension">Suspension</option>
+              <option value="ampoule">Ampoule nue</option>
+              <option value="spot">Spot encastré</option>
+            </select>
+          </div>
+
           <div class="champ champ-inline">
             <label>Tableau électrique inclus</label>
             <input type="checkbox" id="def-tableau-electrique">

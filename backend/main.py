@@ -74,9 +74,20 @@ MATERIAUX_TOIT = {
 ELECTRICITE_PRIX_EUR = {
     "prise": 45,
     "interrupteur": 35,
-    "point_lumineux": 60,
+    "point_lumineux": 60,  # conservé pour compat : sert de repli si categorie_lampe est inconnue
 }
 PRIX_TABLEAU_ELECTRIQUE_EUR = 450  # un seul par projet, forfait
+
+# NOUVEAU — un point lumineux a maintenant une catégorie de lampe, avec
+# un forfait propre à chacune (fourniture + pose). "plafonnier" reste à
+# 60€ par défaut : c'est le prix historique de point_lumineux, donc
+# aucune requête existante (sans categorie_lampe) ne change de résultat.
+PRIX_LAMPE_EUR = {
+    "ampoule": 25,
+    "plafonnier": 60,
+    "suspension": 90,
+    "spot": 45,
+}
 
 
 # ---------------------------------------------------------------
@@ -175,6 +186,10 @@ class ElementElectrique(BaseModel):
     mur_id: Optional[str] = None
     positionX: float = 0
     positionZ: float = 0
+    # NOUVEAU — uniquement pertinent quand type == "point_lumineux" ;
+    # ignoré pour prise/interrupteur. "plafonnier" par défaut pour ne
+    # rien changer aux projets/tests qui ne le renseignent pas encore.
+    categorie_lampe: str = "plafonnier"   # "ampoule" | "plafonnier" | "suspension" | "spot"
 
 
 # ---------------------------------------------------------------
@@ -358,9 +373,16 @@ def calculer_projet(params: ProjetParametres):
     # --- NOUVEAU : lot électrique ---
     resultats_electricite = []
     for elt in params.elements_electriques:
-        prix = ELECTRICITE_PRIX_EUR.get(elt.type, 0)
+        if elt.type == "point_lumineux":
+            # NOUVEAU -- le prix dépend de la catégorie de lampe choisie,
+            # pas d'un forfait unique comme avant. Repli sur "plafonnier"
+            # (60€, le prix historique) si une catégorie inconnue arrive.
+            prix = PRIX_LAMPE_EUR.get(elt.categorie_lampe, PRIX_LAMPE_EUR["plafonnier"])
+        else:
+            prix = ELECTRICITE_PRIX_EUR.get(elt.type, 0)
         resultats_electricite.append({
             "id": elt.id, "type": elt.type, "cout_eur": prix,
+            "categorie_lampe": elt.categorie_lampe if elt.type == "point_lumineux" else None,  # NOUVEAU
         })
         total_cout += prix
 
