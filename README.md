@@ -26,8 +26,10 @@ hcosmo_prototype/
 │   ├── test_main_v6_surface_habitable.py  # tests v6 : surface habitable
 │   └── venv/
 ├── frontend/
-│   ├── index.html                     # logos HCOSMO intégrés en base64 (voir plus bas)
-│   ├── script.js                      # scène 3D + plan 2D + outils de dessin + calcul
+│   ├── index.html                     # interface principale, conteneurs UI et viewport
+│   ├── script.js                      # logique métier, outils de dessin, calculs et rendu global
+│   ├── state.js                       # état centralisé du projet et gestion de l'ID
+│   ├── scene3d.js                     # initialisation et contrôle de la scène 3D
 │   ├── style.css
 │   └── assets/
 │       └── favicon.png                # seul fichier image encore externe
@@ -202,11 +204,17 @@ pas encore modifiables après création.
 - Transformations par saisie de champs : déplacement (position X/Z),
   rotation (en degrés, convertie en radians pour Three.js), et boutons
   de symétrie/miroir sur certains éléments
+- Transformations 3D directes avec gizmo visuel dans la vue 3D :
+  déplacement et rotation d'un élément sélectionné avec un guide
+  interactif, plus des contraintes d'axe (X/Z) et un mode précis
+  avec la touche Maj
 - **Duplication** (bouton 📋 ou raccourci `Ctrl+D`) : murs, dalles,
   poteaux et toits. Dupliquer un mur duplique aussi ses
   fenêtres/portes/éléments électriques rattachés. Fenêtres, portes et
   éléments électriques ne sont pas duplicables individuellement — ils
   suivent uniquement la duplication de leur mur hôte.
+- Depuis la vue **3D**, l’utilisateur peut ajouter uniquement : **fenêtre**, **porte**, **prise** et **interrupteur** (sur un mur existant). Les autres outils restent disponibles uniquement via le **plan 2D**.
+
 - Historique annuler/rétablir (`Ctrl+Z` / `Ctrl+Y`), capture l'état
   complet du projet à chaque recalcul (donc une duplication en cascade
   s'annule bien en un seul geste)
