@@ -639,3 +639,20 @@ html, body {
 .bouton-miroir:hover {
   background: #4a4a4a;
 }
+.forme-glissable { cursor: grab; }
+#svg-plan.glissement-actif,
+#svg-plan.glissement-actif .forme-glissable { cursor: grabbing; }
+.poignee-redimensionner {
+  fill: #ff5533;
+  stroke: #fff;
+  stroke-width: 1;
+  cursor: nwse-resize;
+}
+.poignee-rotation {
+  fill: #ffcc00;
+  stroke: #333;
+  stroke-width: 1;
+  cursor: grab;
+}
+#svg-plan.redimensionnement-actif { cursor: nwse-resize; }
+#svg-plan.rotation-active { cursor: grabbing; }

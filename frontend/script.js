@@ -1983,41 +1983,46 @@ function dessinerPlan2D() {
   const svg = document.getElementById('svg-plan');
   let html = `<g stroke="#ddd" stroke-width="1">${genererGrilleSVG()}</g>`;
 
-  etat.dalles.forEach((dalle, i) => {
+ etat.dalles.forEach((dalle, i) => {
     const coin = mondeVersPixel(dalle.positionX - dalle.longueur / 2, dalle.positionZ - dalle.largeur / 2);
     const l = dalle.longueur * PLAN_ECHELLE, p = dalle.largeur * PLAN_ECHELLE;
-    html += `<rect x="${coin.x}" y="${coin.y}" width="${l}" height="${p}" fill="#cfcfcf" stroke="#555" stroke-width="1.5" />
-      <text x="${coin.x + l / 2}" y="${coin.y + p / 2}" font-size="11" text-anchor="middle" fill="#444">Dalle ${i + 1}</text>`;
+    const selectionnee = elementSelectionne && elementSelectionne.type === 'dalles' && elementSelectionne.id === dalle.id;
+    html += `<g data-glissable="1" data-type="dalles" data-id="${dalle.id}" class="forme-glissable">
+      <rect x="${coin.x}" y="${coin.y}" width="${l}" height="${p}" fill="#cfcfcf" stroke="${selectionnee ? '#ffcc00' : '#555'}" stroke-width="${selectionnee ? 3 : 1.5}" />
+      <text x="${coin.x + l / 2}" y="${coin.y + p / 2}" font-size="11" text-anchor="middle" fill="#444">Dalle ${i + 1}</text>
+    </g>`;
   });
 
-  etat.murs.forEach((mur, i) => {
+ etat.murs.forEach((mur, i) => {
     const coins = coinsMurPixels(mur);
     const points = coins.map(c => `${c.x},${c.y}`).join(' ');
     const centre = mondeVersPixel(mur.positionX, mur.positionZ);
     const estCloison = mur.porteur === false;
-    const couleur = estCloison ? '#d8d3c4' : '#8b5a2b'; // NOUVEAU -- distingue cloison (clair) de mur porteur
+    const couleur = estCloison ? '#d8d3c4' : '#8b5a2b';
     const prefixe = estCloison ? 'C' : 'M';
-    html += `<polygon points="${points}" fill="${couleur}" stroke="#333" stroke-width="1" />
-      <text x="${centre.x}" y="${centre.y - 8}" font-size="10" text-anchor="middle" fill="#333">${prefixe}${i + 1} (${mur.longueur.toFixed(1)}m)</text>`;
+    const selectionne = elementSelectionne && elementSelectionne.type === 'murs' && elementSelectionne.id === mur.id;
+    html += `<g data-glissable="1" data-type="murs" data-id="${mur.id}" class="forme-glissable">
+      <polygon points="${points}" fill="${couleur}" stroke="${selectionne ? '#ffcc00' : '#333'}" stroke-width="${selectionne ? 3 : 1}" />
+      <text x="${centre.x}" y="${centre.y - 8}" font-size="10" text-anchor="middle" fill="#333">${prefixe}${i + 1} (${mur.longueur.toFixed(1)}m)</text>
+    </g>`;
   });
 
   etat.poteaux.forEach((poteau) => {
     const coin = mondeVersPixel(poteau.positionX - poteau.cote / 2, poteau.positionZ - poteau.cote / 2);
     const cote = poteau.cote * PLAN_ECHELLE;
-    html += `<rect x="${coin.x}" y="${coin.y}" width="${cote}" height="${cote}" fill="#555" stroke="#222" stroke-width="1" />`;
+    const selectionne = elementSelectionne && elementSelectionne.type === 'poteaux' && elementSelectionne.id === poteau.id;
+    html += `<rect data-glissable="1" data-type="poteaux" data-id="${poteau.id}" class="forme-glissable" x="${coin.x}" y="${coin.y}" width="${cote}" height="${cote}" fill="#555" stroke="${selectionne ? '#ffcc00' : '#222'}" stroke-width="${selectionne ? 3 : 1}" />`;
   });
 
-  etat.fenetres.forEach((fenetre) => {
-    const mur = etat.murs.find(m => m.id === fenetre.mur_id);
-    if (!mur) return;
-    const d = directionMur(mur);
-    const debut = pointDebutMur(mur);
-    const centreMondeX = debut.x + d.dx * fenetre.offset;
-    const centreMondeZ = debut.z + d.dz * fenetre.offset;
-    const demiL = fenetre.largeur / 2;
-    const p1 = mondeVersPixel(centreMondeX - d.dx * demiL, centreMondeZ - d.dz * demiL);
-    const p2 = mondeVersPixel(centreMondeX + d.dx * demiL, centreMondeZ + d.dz * demiL);
-    html += `<line x1="${p1.x}" y1="${p1.y}" x2="${p2.x}" y2="${p2.y}" stroke="#2166ac" stroke-width="4" stroke-linecap="round" />`;
+  etat.toits.forEach((toit, i) => {
+    const coins = coinsRectanglePixels(toit.positionX, toit.positionZ, toit.longueur, toit.largeur, toit.rotationY || 0);
+    const points = coins.map(c => `${c.x},${c.y}`).join(' ');
+    const centre = mondeVersPixel(toit.positionX, toit.positionZ);
+    const selectionne = elementSelectionne && elementSelectionne.type === 'toits' && elementSelectionne.id === toit.id;
+    html += `<g data-glissable="1" data-type="toits" data-id="${toit.id}" class="forme-glissable">
+      <polygon points="${points}" fill="none" stroke="${selectionne ? '#ffcc00' : '#b33a2e'}" stroke-width="${selectionne ? 3 : 1.5}" stroke-dasharray="4,3" />
+      <text x="${centre.x}" y="${centre.y}" font-size="10" text-anchor="middle" fill="#b33a2e">Toit ${i + 1}</text>
+    </g>`;
   });
 
   // NOUVEAU — Portes (trait marron, plus épais qu'une fenêtre)
@@ -2061,8 +2066,203 @@ function dessinerPlan2D() {
     html += `<circle cx="${px.x}" cy="${px.y}" r="4" fill="#ffcc00" stroke="#333" stroke-width="1" />`;
   });
 
+  html += dessinerPoignees();
   html += dessinerApercu();
   svg.innerHTML = html;
+}
+
+// ============================================================
+// NOUVEAU — OUTILS PARTAGÉS 2D / 3D : type d'éléments déplaçables,
+// conversion repère local <-> monde, redimensionnement, rotation.
+// Les mêmes fonctions servent au plan 2D (SVG) et à la vue 3D
+// (Three.js) : le monde partage les mêmes axes X/Z dans les deux
+// vues, seule la façon de lire la position de la souris diffère.
+// ============================================================
+const TYPES_DEPLACABLES = ['dalles', 'murs', 'poteaux', 'toits'];
+
+// Passe un point du repère LOCAL d'un élément (centré sur lui, tourné
+// de rotationY) vers le repère MONDE -- même formule que dans
+// coinsMurPixels / coinsRectanglePixels, extraite ici pour être
+// réutilisable par les poignées 2D et les manipulateurs 3D.
+function pointLocalVersMonde(centreX, centreZ, rotationY, localX, localZ) {
+  const cosT = Math.cos(rotationY), sinT = Math.sin(rotationY);
+  return {
+    x: localX * cosT + localZ * sinT + centreX,
+    z: -localX * sinT + localZ * cosT + centreZ,
+  };
+}
+
+// Demi-dimensions + rotation d'un élément, quel que soit son type --
+// dalles et poteaux n'ont pas de rotation dans ce modèle (toujours 0).
+function infosTailleElement(type, objet) {
+  if (type === 'murs') return { demiLong: objet.longueur / 2, demiLarg: objet.epaisseur / 2, rotation: objet.rotationY || 0 };
+  if (type === 'dalles') return { demiLong: objet.longueur / 2, demiLarg: objet.largeur / 2, rotation: 0 };
+  if (type === 'toits') return { demiLong: objet.longueur / 2, demiLarg: objet.largeur / 2, rotation: objet.rotationY || 0 };
+  if (type === 'poteaux') return { demiLong: objet.cote / 2, demiLarg: objet.cote / 2, rotation: 0 };
+  return null;
+}
+
+const TAILLE_MIN_M = 0.2; // évite un élément de taille nulle/négative en tirant la poignée
+
+// Redimensionne un élément à partir d'une position souris en
+// coordonnées MONDE (X/Z) : on repasse cette position dans le repère
+// local de l'élément (selon sa rotation actuelle) ; sa distance à
+// l'origine locale sur chaque axe donne la nouvelle demi-taille.
+// NOTE -- le redimensionnement est symétrique autour du centre (pas
+// ancré sur le coin opposé comme dans certains logiciels de dessin) :
+// plus simple à calculer, suffisant pour ce prototype.
+function redimensionnerElement(type, id, mondePos) {
+  const objet = etat[type].find(o => o.id === id);
+  if (!objet) return;
+  const rotation = objet.rotationY || 0;
+  const dx = mondePos.x - objet.positionX;
+  const dz = mondePos.z - objet.positionZ;
+  const cosT = Math.cos(rotation), sinT = Math.sin(rotation);
+  const localX = dx * cosT - dz * sinT;
+  const localZ = dx * sinT + dz * cosT;
+
+  if (type === 'poteaux') {
+    objet.cote = Math.max(TAILLE_MIN_M, 2 * Math.max(Math.abs(localX), Math.abs(localZ)));
+    return;
+  }
+  if (type === 'murs') {
+    objet.longueur = Math.max(TAILLE_MIN_M, 2 * Math.abs(localX));
+    objet.epaisseur = Math.max(TAILLE_MIN_M, 2 * Math.abs(localZ));
+    return;
+  }
+  objet.longueur = Math.max(TAILLE_MIN_M, 2 * Math.abs(localX)); // dalles et toits
+  objet.largeur = Math.max(TAILLE_MIN_M, 2 * Math.abs(localZ));
+}
+
+// Oriente un élément (murs / toits uniquement) pour que son axe
+// pointe vers la position souris -- même formule atan2(-dz, dx) déjà
+// utilisée ailleurs pour orienter un mur tracé au clic.
+function orienterElement(type, id, mondePos) {
+  const objet = etat[type].find(o => o.id === id);
+  if (!objet) return;
+  const dx = mondePos.x - objet.positionX;
+  const dz = mondePos.z - objet.positionZ;
+  objet.rotationY = normaliserAngle(Math.atan2(-dz, dx));
+}
+
+// ============================================================
+// NOUVEAU — GLISSER / REDIMENSIONNER / TOURNER SUR LE PLAN 2D
+// ============================================================
+let glissement = null;          // { type, id, decalageX, decalageZ } | null
+let redimensionnement = null;   // { type, id } | null
+let rotationEnCours = null;     // { type, id } | null
+
+function pointEcranVersMondeBrut(evt) {
+  const svg = document.getElementById('svg-plan');
+  const point = svg.createSVGPoint();
+  point.x = evt.clientX;
+  point.y = evt.clientY;
+  const pointSVG = point.matrixTransform(svg.getScreenCTM().inverse());
+  return {
+    x: (pointSVG.x - PLAN_ORIGINE_X) / PLAN_ECHELLE,
+    z: (pointSVG.y - PLAN_ORIGINE_Y) / PLAN_ECHELLE,
+  };
+}
+
+document.getElementById('svg-plan').addEventListener('mousedown', (evt) => {
+  if (modeDessin) return; // un outil de dessin actif passe toujours devant
+
+  const poigneeRotation = evt.target.closest('[data-poignee="rotation"]');
+  if (poigneeRotation) {
+    evt.preventDefault();
+    rotationEnCours = { type: poigneeRotation.dataset.type, id: poigneeRotation.dataset.id };
+    document.getElementById('svg-plan').classList.add('rotation-active');
+    return;
+  }
+
+  const poigneeRedim = evt.target.closest('[data-poignee="redimensionner"]');
+  if (poigneeRedim) {
+    evt.preventDefault();
+    redimensionnement = { type: poigneeRedim.dataset.type, id: poigneeRedim.dataset.id };
+    document.getElementById('svg-plan').classList.add('redimensionnement-actif');
+    return;
+  }
+
+  const cible = evt.target.closest('[data-glissable="1"]');
+  if (!cible) return;
+
+  const type = cible.dataset.type;
+  const id = cible.dataset.id;
+  const objet = etat[type].find(o => o.id === id);
+  if (!objet) return;
+
+  evt.preventDefault();
+
+  const depart = pointEcranVersMondeBrut(evt);
+  glissement = {
+    type, id,
+    decalageX: objet.positionX - depart.x,
+    decalageZ: objet.positionZ - depart.z,
+  };
+
+  if (!(elementSelectionne && elementSelectionne.type === type && elementSelectionne.id === id)) {
+    selectionner(type, id);
+  }
+
+  document.getElementById('svg-plan').classList.add('glissement-actif');
+});
+
+window.addEventListener('mousemove', (evt) => {
+  if (!glissement && !redimensionnement && !rotationEnCours) return;
+
+  if (glissement) {
+    const objet = etat[glissement.type].find(o => o.id === glissement.id);
+    if (!objet) { glissement = null; return; }
+    const brut = pointEcranVersMondeBrut(evt);
+    const nouvelle = accrocherALaGrille({ x: brut.x + glissement.decalageX, z: brut.z + glissement.decalageZ });
+    objet.positionX = nouvelle.x;
+    objet.positionZ = nouvelle.z;
+  } else if (redimensionnement) {
+    redimensionnerElement(redimensionnement.type, redimensionnement.id, pointEcranVersMondeBrut(evt));
+  } else if (rotationEnCours) {
+    orienterElement(rotationEnCours.type, rotationEnCours.id, pointEcranVersMondeBrut(evt));
+  }
+
+  dessinerPlan2D();
+  recalculerProjet();
+});
+
+window.addEventListener('mouseup', () => {
+  if (!glissement && !redimensionnement && !rotationEnCours) return;
+  glissement = null;
+  redimensionnement = null;
+  rotationEnCours = null;
+  document.getElementById('svg-plan').classList.remove('glissement-actif', 'redimensionnement-actif', 'rotation-active');
+});
+
+// Dessine les poignées (coin de redimensionnement + poignée de
+// rotation) autour de l'élément sélectionné, si son type le permet.
+function dessinerPoignees() {
+  if (modeDessin || !elementSelectionne) return '';
+  const { type, id } = elementSelectionne;
+  if (!TYPES_DEPLACABLES.includes(type)) return '';
+  const objet = etat[type].find(o => o.id === id);
+  if (!objet) return '';
+  const infos = infosTailleElement(type, objet);
+  if (!infos) return '';
+
+  let html = '';
+
+  const coin = pointLocalVersMonde(objet.positionX, objet.positionZ, infos.rotation, infos.demiLong, infos.demiLarg);
+  const pxCoin = mondeVersPixel(coin.x, coin.z);
+  html += `<rect data-poignee="redimensionner" data-type="${type}" data-id="${id}" class="poignee-redimensionner"
+    x="${pxCoin.x - 6}" y="${pxCoin.y - 6}" width="12" height="12" />`;
+
+  if (type === 'murs' || type === 'toits') {
+    const DECALAGE_POIGNEE_ROTATION_M = 0.8;
+    const pointRotation = pointLocalVersMonde(objet.positionX, objet.positionZ, infos.rotation, 0, -(infos.demiLarg + DECALAGE_POIGNEE_ROTATION_M));
+    const pxRotation = mondeVersPixel(pointRotation.x, pointRotation.z);
+    const centre = mondeVersPixel(objet.positionX, objet.positionZ);
+    html += `<line x1="${centre.x}" y1="${centre.y}" x2="${pxRotation.x}" y2="${pxRotation.y}" stroke="#ffcc00" stroke-width="1" stroke-dasharray="3,3" />
+      <circle data-poignee="rotation" data-type="${type}" data-id="${id}" class="poignee-rotation" cx="${pxRotation.x}" cy="${pxRotation.y}" r="7" />`;
+  }
+
+  return html;
 }
 
 // ============================================================
@@ -2143,15 +2343,16 @@ function appliquerSurbrillanceSelection() {
     contourSelection.material.dispose();
     contourSelection = null;
   }
-  if (!elementSelectionne) return;
-
-  const mesh = groupeElements.children.find(
-    m => m.userData?.type === elementSelectionne.type && m.userData?.id === elementSelectionne.id
-  );
-  if (!mesh) return; // élément supprimé entre-temps
-
-  contourSelection = new THREE.BoxHelper(mesh, 0xffcc00);
-  scene.add(contourSelection);
+  if (elementSelectionne) {
+    const mesh = groupeElements.children.find(
+      m => m.userData?.type === elementSelectionne.type && m.userData?.id === elementSelectionne.id
+    );
+    if (mesh) {
+      contourSelection = new THREE.BoxHelper(mesh, 0xffcc00);
+      scene.add(contourSelection);
+    }
+  }
+  mettreAJourManipulateurs3D(); // NOUVEAU -- repositionne les poignées 3D sur l'élément sélectionné
 }
 
 // Ajoute/retire la classe CSS "selectionne" sur la ligne du panneau
@@ -2171,6 +2372,10 @@ const raycaster = new THREE.Raycaster();
 const sourisNormalisee = new THREE.Vector2();
 
 renderer.domElement.addEventListener('click', (evt) => {
+  // NOUVEAU -- si ce clic est la fin d'un glisser (déplacement,
+  // redimensionnement ou rotation en 3D), on l'ignore : sinon il
+  // désélectionnerait l'élément qu'on vient tout juste de lâcher.
+  if (ignorerProchainClicScene) { ignorerProchainClicScene = false; return; }
   // Ne pas interférer avec le mode dessin (qui a sa propre gestion de
   // clic sur le plan 2D, pas sur le canvas 3D) -- ici on est toujours
   // dans la scène 3D, donc pas de conflit, mais on vérifie quand même
@@ -2203,7 +2408,157 @@ renderer.domElement.addEventListener('click', (evt) => {
   if (!objetTouche) return; // sécurité, ne devrait pas arriver
   selectionner(objetTouche.userData.type, objetTouche.userData.id);
 });
+// ============================================================
+// NOUVEAU — GLISSER / REDIMENSIONNER / TOURNER DANS LA VUE 3D
+// ============================================================
+// Un plan horizontal invisible (y = 0) sert à convertir la position
+// de la souris en coordonnées monde (X/Z) via un rayon Three.js.
+// redimensionnerElement / orienterElement / accrocherALaGrille sont
+// RÉUTILISÉES telles quelles : les axes X/Z sont les mêmes qu'en 2D.
 
+const groupeManipulateurs3D = new THREE.Group();
+scene.add(groupeManipulateurs3D);
+
+const planSol = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+const raycasterGlisse3D = new THREE.Raycaster();
+const sourisGlisse3D = new THREE.Vector2();
+const pointGlisse3D = new THREE.Vector3();
+
+function survolerPlanSol3D(evt) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  sourisGlisse3D.x = ((evt.clientX - rect.left) / rect.width) * 2 - 1;
+  sourisGlisse3D.y = -((evt.clientY - rect.top) / rect.height) * 2 + 1;
+  raycasterGlisse3D.setFromCamera(sourisGlisse3D, camera);
+  const touche = raycasterGlisse3D.ray.intersectPlane(planSol, pointGlisse3D);
+  return touche ? { x: touche.x, z: touche.z } : null;
+}
+
+function viderManipulateurs3D() {
+  while (groupeManipulateurs3D.children.length > 0) {
+    const objet3D = groupeManipulateurs3D.children.pop();
+    objet3D.geometry.dispose();
+    objet3D.material.dispose();
+  }
+}
+
+// Hauteur purement visuelle des poignées -- aucune incidence sur le
+// calcul, juste pour qu'elles soient visibles au-dessus de l'élément.
+function hauteurAffichageManipulateur(type, objet) {
+  if (type === 'murs' || type === 'poteaux') return (objet.hauteur || 2.5) + 0.3;
+  if (type === 'toits') return (objet.hauteur_support || 2.5) + 0.5;
+  return 0.3; // dalles
+}
+
+function mettreAJourManipulateurs3D() {
+  viderManipulateurs3D();
+  if (!elementSelectionne) return;
+  const { type, id } = elementSelectionne;
+  if (!TYPES_DEPLACABLES.includes(type)) return;
+  const objet = etat[type].find(o => o.id === id);
+  if (!objet) return;
+  const infos = infosTailleElement(type, objet);
+  if (!infos) return;
+  const y = hauteurAffichageManipulateur(type, objet);
+
+  const coin = pointLocalVersMonde(objet.positionX, objet.positionZ, infos.rotation, infos.demiLong, infos.demiLarg);
+  const meshRedim = new THREE.Mesh(
+    new THREE.BoxGeometry(0.25, 0.25, 0.25),
+    new THREE.MeshBasicMaterial({ color: 0xff5533 })
+  );
+  meshRedim.position.set(coin.x, y, coin.z);
+  meshRedim.userData = { poignee: 'redimensionner', type, id };
+  groupeManipulateurs3D.add(meshRedim);
+
+  if (type === 'murs' || type === 'toits') {
+    const DECALAGE_POIGNEE_ROTATION_M = 0.8;
+    const pointRotation = pointLocalVersMonde(objet.positionX, objet.positionZ, infos.rotation, 0, -(infos.demiLarg + DECALAGE_POIGNEE_ROTATION_M));
+    const meshRotation = new THREE.Mesh(
+      new THREE.SphereGeometry(0.18, 12, 12),
+      new THREE.MeshBasicMaterial({ color: 0xffcc00 })
+    );
+    meshRotation.position.set(pointRotation.x, y, pointRotation.z);
+    meshRotation.userData = { poignee: 'rotation', type, id };
+    groupeManipulateurs3D.add(meshRotation);
+  }
+}
+
+let glissement3D = null;         // { type, id, decalageX, decalageZ } | null
+let redimensionnement3D = null;  // { type, id } | null
+let rotationEnCours3D = null;    // { type, id } | null
+let ignorerProchainClicScene = false;
+
+renderer.domElement.addEventListener('mousedown', (evt) => {
+  const rect = renderer.domElement.getBoundingClientRect();
+  sourisGlisse3D.x = ((evt.clientX - rect.left) / rect.width) * 2 - 1;
+  sourisGlisse3D.y = -((evt.clientY - rect.top) / rect.height) * 2 + 1;
+  raycasterGlisse3D.setFromCamera(sourisGlisse3D, camera);
+
+  // 1) Poignées (redimensionner / tourner) en priorité
+  const intersectionsManip = raycasterGlisse3D.intersectObjects(groupeManipulateurs3D.children, false);
+  if (intersectionsManip.length > 0) {
+    const poignee = intersectionsManip[0].object.userData;
+    evt.preventDefault();
+    controls.enabled = false;
+    if (poignee.poignee === 'redimensionner') redimensionnement3D = { type: poignee.type, id: poignee.id };
+    else rotationEnCours3D = { type: poignee.type, id: poignee.id };
+    return;
+  }
+
+  // 2) Sinon, élément déplaçable directement (mur, dalle, poteau, toit)
+  const intersectionsElements = raycasterGlisse3D.intersectObjects(groupeElements.children, true);
+  if (intersectionsElements.length === 0) return;
+
+  let objetTouche = intersectionsElements[0].object;
+  while (objetTouche && !objetTouche.userData?.type) objetTouche = objetTouche.parent;
+  if (!objetTouche) return;
+
+  const { type, id } = objetTouche.userData;
+  if (!TYPES_DEPLACABLES.includes(type)) return; // fenêtres/portes/élec suivent leur mur
+
+  const objet = etat[type].find(o => o.id === id);
+  if (!objet) return;
+
+  const point = survolerPlanSol3D(evt);
+  if (!point) return;
+
+  evt.preventDefault();
+  controls.enabled = false;
+  glissement3D = {
+    type, id,
+    decalageX: objet.positionX - point.x,
+    decalageZ: objet.positionZ - point.z,
+  };
+});
+
+renderer.domElement.addEventListener('mousemove', (evt) => {
+  if (!glissement3D && !redimensionnement3D && !rotationEnCours3D) return;
+  const point = survolerPlanSol3D(evt);
+  if (!point) return;
+
+  if (glissement3D) {
+    const objet = etat[glissement3D.type].find(o => o.id === glissement3D.id);
+    if (!objet) { glissement3D = null; return; }
+    const nouvelle = accrocherALaGrille({ x: point.x + glissement3D.decalageX, z: point.z + glissement3D.decalageZ });
+    objet.positionX = nouvelle.x;
+    objet.positionZ = nouvelle.z;
+  } else if (redimensionnement3D) {
+    redimensionnerElement(redimensionnement3D.type, redimensionnement3D.id, point);
+  } else if (rotationEnCours3D) {
+    orienterElement(rotationEnCours3D.type, rotationEnCours3D.id, point);
+  }
+
+  recalculerProjet();
+});
+
+window.addEventListener('mouseup', () => {
+  if (glissement3D || redimensionnement3D || rotationEnCours3D) {
+    ignorerProchainClicScene = true;
+    glissement3D = null;
+    redimensionnement3D = null;
+    rotationEnCours3D = null;
+    controls.enabled = true;
+  }
+});
 // --- Détection du clic dans la liste du panneau latéral ---
 document.getElementById('liste-elements').addEventListener('click', (evt) => {
   // Ne pas déclencher la sélection si on clique sur le bouton supprimer
