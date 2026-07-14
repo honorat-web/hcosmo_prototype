@@ -1,107 +1,49 @@
 // ============================================================
-// SCÈNE 3D DE BASE — plateau vide au démarrage : aucun mur, aucune
-// dalle, aucun poteau n'est créé ici. Tout vient des listes ci-dessous,
-// remplies uniquement par les actions de l'utilisateur.
+// SCÈNE 3D — initialisée via le module dédié.
 // ============================================================
 
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xdddddd);
-
-// NOUVEAU — le rendu 3D s'insère désormais dans #zone-viewport (une zone
-// de la nouvelle interface façon VS Code) au lieu d'occuper tout l'écran
-// derrière les panneaux. On lit sa taille réelle, pas celle de la fenêtre.
 const conteneurViewport = document.getElementById('zone-viewport');
-
-const camera = new THREE.PerspectiveCamera(75, 16 / 9, 0.1, 1000); // ratio provisoire, corrigé par redimensionnerViewport()
-camera.position.set(6, 5, 10);
-
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.shadowMap.enabled = true;
-conteneurViewport.appendChild(renderer.domElement);
-
-const controls = new THREE.OrbitControls(camera, renderer.domElement);
-controls.minDistance = 2;
-controls.maxDistance = 40;
-controls.maxPolarAngle = Math.PI / 2.1;
-controls.target.set(0, 1, 0);
-controls.update();
-
-const lumiere = new THREE.DirectionalLight(0xffffff, 1);
-lumiere.position.set(5, 8, 5);
-lumiere.castShadow = true;
-scene.add(lumiere);
-scene.add(new THREE.DirectionalLight(0xffffff, 0.4).translateX(-5));
-scene.add(new THREE.AmbientLight(0x404040));
-
-const sol = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), new THREE.ShadowMaterial({ opacity: 0.25 }));
-sol.rotation.x = -Math.PI / 2;
-sol.receiveShadow = true;
-scene.add(sol);
-scene.add(new THREE.GridHelper(20, 20));
-
-// Groupe contenant TOUS les meshes des éléments du projet. À chaque
-// recalcul, on vide ce groupe et on le repeuple depuis les listes --
-// plus simple et plus fiable que d'essayer de "mettre à jour" chaque
-// mesh individuellement quand le nombre d'éléments change dynamiquement.
-const groupeElements = new THREE.Group();
-scene.add(groupeElements);
+const scene3D = HCOSMO.createScene3D(conteneurViewport);
+const scene = scene3D.scene;
+const camera = scene3D.camera;
+const renderer = scene3D.renderer;
+const controls = scene3D.controls;
+const groupeElements = scene3D.groupElements;
+const groupeSoubassements = scene3D.groupFoundations;
+scene3D.setTransformCallback(() => {});
 
 function viderGroupeElements() {
   while (groupeElements.children.length > 0) {
     const objet = groupeElements.children.pop();
-    // NOUVEAU — objet peut être un Mesh simple (mur, dalle...) OU un
-    // Group (fenêtre/porte, désormais composées de cadre+vantail+poignée) :
-    // on parcourt récursivement pour libérer la géométrie/matériau de
-    // CHAQUE mesh interne, pas juste l'objet racine (qui, pour un Group,
-    // n'a lui-même ni géométrie ni matériau à libérer).
     objet.traverse(enfant => {
       if (enfant.isMesh) {
         enfant.geometry.dispose();
-        enfant.material.dispose();
+        if (Array.isArray(enfant.material)) {
+          enfant.material.forEach(mat => mat.dispose());
+        } else if (enfant.material) {
+          enfant.material.dispose();
+        }
       }
     });
     groupeElements.remove(objet);
   }
 }
 
-// NOUVEAU — Groupe SÉPARÉ pour les soubassements. Volontairement séparé
-// de groupeElements : le raycaster de sélection (voir plus bas) ne
-// consulte QUE groupeElements.children, donc les soubassements ne sont
-// jamais cliquables/sélectionnables individuellement -- cohérent avec
-// le fait que ce ne sont pas des éléments indépendants, juste des
-// prolongements automatiques de leur mur.
-const groupeSoubassements = new THREE.Group();
-scene.add(groupeSoubassements);
-
 function viderGroupeSoubassements() {
   while (groupeSoubassements.children.length > 0) {
     const mesh = groupeSoubassements.children.pop();
     mesh.geometry.dispose();
-    mesh.material.dispose();
+    if (Array.isArray(mesh.material)) {
+      mesh.material.forEach(mat => mat.dispose());
+    } else if (mesh.material) {
+      mesh.material.dispose();
+    }
     groupeSoubassements.remove(mesh);
   }
 }
 
-function animer() {
-  requestAnimationFrame(animer);
-  controls.update();
-  renderer.render(scene, camera);
-}
-animer();
-
-// NOUVEAU — recalcule la taille du rendu 3D à partir de la zone qui le
-// contient réellement (pas de la fenêtre entière). Appelée au
-// redimensionnement de la fenêtre, ET à chaque fois qu'un panneau
-// apparaît/disparaît (ce qui change la largeur disponible), ET une fois
-// au moment où on quitte l'écran d'accueil (tant que #app-shell est
-// masqué, #zone-viewport a une taille de 0x0, donc rien à calculer avant).
 function redimensionnerViewport() {
-  const largeur = conteneurViewport.clientWidth;
-  const hauteur = conteneurViewport.clientHeight;
-  if (largeur === 0 || hauteur === 0) return; // pas encore visible, on ignore
-  camera.aspect = largeur / hauteur;
-  camera.updateProjectionMatrix();
-  renderer.setSize(largeur, hauteur);
+  scene3D.resize();
 }
 
 window.addEventListener('resize', () => {
@@ -114,20 +56,11 @@ window.addEventListener('resize', () => {
 // démarre vide : c'est à l'utilisateur d'ajouter chaque élément.
 // ============================================================
 
-const etat = {
-  murs: [],     // { id, longueur, hauteur, epaisseur, materiau, positionX, positionZ, rotationY }
-  dalles: [],   // { id, longueur, largeur, epaisseur, materiau, positionX, positionZ }
-  poteaux: [],  // { id, cote, hauteur, materiau, positionX, positionZ }
-  fenetres: [], // { id, mur_id, offset, largeur, hauteur, hauteur_allege }
-  portes: [],   // { id, mur_id, offset, largeur, hauteur } — NOUVEAU
-  toits: [],    // { id, longueur, largeur, pente_degres, materiau, positionX, positionZ, hauteur_support } — NOUVEAU
-  elements_electriques: [], // { id, type, mur_id, offset, hauteur, positionX, positionZ } — NOUVEAU
-  tableau_electrique: false, // NOUVEAU — un seul par projet, simple case à cocher
-};
+const etat = HCOSMO.createProjectState();
+const generateurId = HCOSMO.createIdGenerator(1);
 
-let prochainId = 1;
 function genererId(prefixe) {
-  return `${prefixe}-${prochainId++}`;
+  return `${prefixe}-${generateurId()}`;
 }
 
 // ============================================================
@@ -574,34 +507,146 @@ function creerMeshToit(toit) {
   return mesh;
 }
 
-// NOUVEAU — Éléments électriques : petits marqueurs sphériques symboliques.
-// Prise/interrupteur sont posés sur un mur (comme les fenêtres), le point
-// lumineux est posé librement (comme un poteau), au plafond.
+// NOUVEAU — Éléments électriques avec des formes réalistes :
+// - Prise / interrupteur : une plaque murale plate, MONTÉE EN SAILLIE
+//   sur la face du mur (pas au centre de son épaisseur comme avant --
+//   c'était le bug signalé : l'appareil semblait "dans" le mur au lieu
+//   d'être dessus).
+// - Point lumineux : 4 formes possibles selon sa categorie_lampe.
 const COULEURS_ELECTRICITE = { prise: 0xffcc00, interrupteur: 0xffffff, point_lumineux: 0xfff59d };
 
+// Vecteur perpendiculaire à la longueur du mur (sa "normale"), dans le
+// plan horizontal -- sert à sortir un appareil de la face du mur au
+// lieu de le laisser au centre de son épaisseur. Même convention de
+// rotation que directionMur (voir coinsMurPixels) : tourner (dx,dz)
+// de 90° donne (-dz, dx).
+function normaleMur(mur) {
+  const d = directionMur(mur);
+  return { nx: -d.dz, nz: d.dx };
+}
+
+function creerMeshPrise(mur, centreX, centreZ, hauteur) {
+  const n = normaleMur(mur);
+  const epaisseurPlaque = 0.012;
+  const decalage = mur.epaisseur / 2 + epaisseurPlaque / 2; // juste au ras de la face du mur, pas dedans
+
+  const groupe = new THREE.Group();
+  groupe.position.set(centreX + n.nx * decalage, hauteur, centreZ + n.nz * decalage);
+  groupe.rotation.y = mur.rotationY;
+
+  const materiauPlaque = new THREE.MeshStandardMaterial({ color: 0xf1ede4, roughness: 0.5 });
+  const plaque = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, epaisseurPlaque), materiauPlaque);
+  groupe.add(plaque);
+
+  // 2 alvéoles rondes (simplification d'une vraie prise française, qui
+  // a aussi une terre centrale -- suffisant pour la lisibilité à
+  // l'échelle du prototype)
+  const materiauTrou = new THREE.MeshStandardMaterial({ color: 0x2a2a2a });
+  [-0.015, 0.015].forEach(dx => {
+    const trou = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.006, 12), materiauTrou);
+    trou.rotation.x = Math.PI / 2; // couche le cylindre pour que son axe sorte de la plaque
+    trou.position.set(dx, 0, epaisseurPlaque / 2);
+    groupe.add(trou);
+  });
+
+  return groupe;
+}
+
+function creerMeshInterrupteur(mur, centreX, centreZ, hauteur) {
+  const n = normaleMur(mur);
+  const epaisseurPlaque = 0.012;
+  const decalage = mur.epaisseur / 2 + epaisseurPlaque / 2;
+
+  const groupe = new THREE.Group();
+  groupe.position.set(centreX + n.nx * decalage, hauteur, centreZ + n.nz * decalage);
+  groupe.rotation.y = mur.rotationY;
+
+  const materiauPlaque = new THREE.MeshStandardMaterial({ color: 0xf1ede4, roughness: 0.5 });
+  const plaque = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, epaisseurPlaque), materiauPlaque);
+  groupe.add(plaque);
+
+  // Bascule (le petit rectangle qu'on appuie) : légèrement en saillie
+  // devant la plaque, blanche pour trancher visuellement sur l'ivoire.
+  const materiauBascule = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3 });
+  const bascule = new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.045, 0.01), materiauBascule);
+  bascule.position.set(0, 0, epaisseurPlaque / 2 + 0.005);
+  groupe.add(bascule);
+
+  return groupe;
+}
+
+// NOUVEAU — un point lumineux prend une forme différente selon sa
+// categorie_lampe, pour laisser un vrai choix visuel à l'utilisateur
+// plutôt qu'un unique marqueur générique.
+function creerMeshLampe(element) {
+  const categorie = element.categorie_lampe || 'plafonnier';
+  const groupe = new THREE.Group();
+  groupe.position.set(element.positionX, element.hauteur, element.positionZ);
+
+  const materiauMetal = new THREE.MeshStandardMaterial({ color: 0xc0c0c0, metalness: 0.6, roughness: 0.4 });
+  const materiauAmpoule = new THREE.MeshStandardMaterial({ color: 0xfff3c4, emissive: 0xfff3c4, emissiveIntensity: 0.7 });
+  const materiauAbatJour = new THREE.MeshStandardMaterial({ color: 0xe8e0d0, roughness: 0.6, side: THREE.DoubleSide });
+
+  if (categorie === 'ampoule') {
+    // Ampoule nue au bout d'un fil : la plus sommaire des 4 formes,
+    // typique d'un local technique ou d'un chantier pas fini.
+    const fil = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.15, 6), materiauMetal);
+    fil.position.y = 0.075;
+    groupe.add(fil);
+    groupe.add(new THREE.Mesh(new THREE.SphereGeometry(0.06, 12, 12), materiauAmpoule));
+
+  } else if (categorie === 'suspension') {
+    // Suspension : abat-jour conique qui pend au bout d'un câble --
+    // décalée SOUS le plafond, contrairement au plafonnier plaqué dessus.
+    const chute = 0.4;
+    const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, chute, 6), materiauMetal);
+    cable.position.y = -chute / 2;
+    groupe.add(cable);
+    // openEnded=true : pas de fond fermé au cône, pour voir l'ampoule
+    // "dans" l'abat-jour plutôt qu'un cône plein sans lumière visible.
+    const abatJour = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.12, 20, 1, true), materiauAbatJour);
+    abatJour.position.y = -chute;
+    groupe.add(abatJour);
+    const ampoule = new THREE.Mesh(new THREE.SphereGeometry(0.03, 10, 10), materiauAmpoule);
+    ampoule.position.y = -chute + 0.025;
+    groupe.add(ampoule);
+
+  } else if (categorie === 'spot') {
+    // Spot encastré : quasi affleurant au plafond, juste une collerette
+    // fine qui dépasse -- look "faux plafond avec spots" très courant.
+    const collerette = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.055, 0.055, 0.015, 20),
+      new THREE.MeshStandardMaterial({ color: 0xffffff })
+    );
+    groupe.add(collerette);
+    const ampoule = new THREE.Mesh(new THREE.SphereGeometry(0.02, 10, 10), materiauAmpoule);
+    ampoule.position.y = -0.015;
+    groupe.add(ampoule);
+
+  } else {
+    // 'plafonnier' (par défaut) : disque plaqué directement contre le plafond.
+    groupe.add(new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.05, 20), materiauAbatJour));
+    const ampoule = new THREE.Mesh(new THREE.SphereGeometry(0.03, 10, 10), materiauAmpoule);
+    ampoule.position.y = -0.03;
+    groupe.add(ampoule);
+  }
+
+  return groupe;
+}
+
 function creerMeshElementElectrique(element, mur) {
-  let x, y, z;
-  if (element.mur_id) {
+  if (element.type === 'prise' || element.type === 'interrupteur') {
     if (!mur) return null; // mur supprimé entre-temps
     const d = directionMur(mur);
     const debut = pointDebutMur(mur);
-    x = debut.x + d.dx * element.offset;
-    z = debut.z + d.dz * element.offset;
-    y = element.hauteur;
-  } else {
-    x = element.positionX;
-    z = element.positionZ;
-    y = element.hauteur;
+    const centreX = debut.x + d.dx * element.offset;
+    const centreZ = debut.z + d.dz * element.offset;
+    return element.type === 'prise'
+      ? creerMeshPrise(mur, centreX, centreZ, element.hauteur)
+      : creerMeshInterrupteur(mur, centreX, centreZ, element.hauteur);
   }
-  const geometrie = new THREE.SphereGeometry(0.08, 12, 12);
-  const materiau = new THREE.MeshStandardMaterial({
-    color: COULEURS_ELECTRICITE[element.type] || 0xffffff,
-    emissive: element.type === 'point_lumineux' ? 0xfff59d : 0x000000,
-    emissiveIntensity: 0.6,
-  });
-  const mesh = new THREE.Mesh(geometrie, materiau);
-  mesh.position.set(x, y, z);
-  return mesh;
+  // point_lumineux : posé librement (plafond), forme selon categorie_lampe
+  return creerMeshLampe(element);
 }
 
 // NOUVEAU — Soubassement : dérivé du mur, jamais stocké séparément.
@@ -752,6 +797,9 @@ const MATERIAUX_TOIT_SECOURS = { // NOUVEAU
   beton:   { prix_eur_m2: 60, poids_kg_m2: 300 },
 };
 const ELECTRICITE_PRIX_SECOURS = { prise: 45, interrupteur: 35, point_lumineux: 60 }; // NOUVEAU
+// NOUVEAU — prix par catégorie de lampe, miroir exact de PRIX_LAMPE_EUR
+// côté backend (main.py) -- à resynchroniser si l'un des deux change.
+const PRIX_LAMPE_SECOURS = { ampoule: 25, plafonnier: 60, suspension: 90, spot: 45 };
 const PRIX_TABLEAU_ELECTRIQUE_SECOURS = 450; // NOUVEAU
 
 // NOUVEAU — Soubassement automatique : mêmes constantes que main.py
@@ -846,10 +894,16 @@ function calculerProjetSecours() {
     };
   });
 
-  // NOUVEAU — lot électrique
-  const resultatsElectricite = etat.elements_electriques.map(e => ({
-    id: e.id, type: e.type, cout_eur: ELECTRICITE_PRIX_SECOURS[e.type] || 0,
-  }));
+  // NOUVEAU — lot électrique (le point_lumineux dépend de sa categorie_lampe)
+  const resultatsElectricite = etat.elements_electriques.map(e => {
+    const cout = e.type === 'point_lumineux'
+      ? (PRIX_LAMPE_SECOURS[e.categorie_lampe] ?? PRIX_LAMPE_SECOURS.plafonnier)
+      : (ELECTRICITE_PRIX_SECOURS[e.type] || 0);
+    return {
+      id: e.id, type: e.type, cout_eur: cout,
+      categorie_lampe: e.type === 'point_lumineux' ? (e.categorie_lampe || 'plafonnier') : null,
+    };
+  });
 
   const tousLesResultats = [...resultatsMurs, ...resultatsDalles, ...resultatsPoteaux, ...resultatsSoubassements];
   const coutStructure = tousLesResultats.reduce((s, r) => s + r.cout_total_eur, 0);
@@ -1096,6 +1150,7 @@ async function recalculerProjetImmediat() {
 
 let minuteurDebounce = null;
 function recalculerProjet() {
+  synchroniserSelectionEtat();
   clearTimeout(minuteurDebounce);
   minuteurDebounce = setTimeout(recalculerProjetImmediat, 120);
 }
@@ -1292,11 +1347,16 @@ function rafraichirListeElements(resultat) {
 
   // NOUVEAU — Éléments électriques
   const nomsElectrique = { prise: 'Prise', interrupteur: 'Interrupteur', point_lumineux: 'Point lumineux' };
+  const nomsLampe = { ampoule: 'Ampoule nue', plafonnier: 'Plafonnier', suspension: 'Suspension', spot: 'Spot encastré' };
   etat.elements_electriques.forEach((element, i) => {
+    const libelleCategorie = element.type === 'point_lumineux'
+      ? (nomsLampe[element.categorie_lampe] || 'Plafonnier')
+      : '';
     html += `
       <div class="ligne-element" data-type="elements_electriques" data-id="${element.id}">
         <div class="entete-element">
           <span class="nom-element">${nomsElectrique[element.type] || element.type} ${i + 1}</span>
+          ${libelleCategorie ? `<span class="valeurs-element">${libelleCategorie}</span>` : ''}
           <button class="bouton-supprimer" data-action="supprimer" data-type="elements_electriques" data-id="${element.id}">✕</button>
         </div>
       </div>`;
@@ -1490,15 +1550,49 @@ document.getElementById('liste-elements').addEventListener('click', (evt) => {
 // ============================================================
 
 let modeDessin = null;       // null | 'dalle' | 'mur' | 'cloison' | 'poteau' | 'fenetre'
+let modeTransformation = null; // null | 'move' | 'rotate'
 let pointDepart = null;      // 1er clic pour dalle/mur
 let dernierePositionSouris = null;
 let shiftEnfoncee = false;
+let transformationEnCours = null;
+let pointDepartTransformation = null;
+let objetTransformation = null;
+let transformationAxe = null;
 
-document.addEventListener('keydown', (e) => { if (e.key === 'Shift') shiftEnfoncee = true; });
-document.addEventListener('keyup', (e) => { if (e.key === 'Shift') shiftEnfoncee = false; });
+function synchroniserTransformDepuisMesh(mesh) {
+  if (!elementSelectionne || !mesh) return;
+  const objet = etat[elementSelectionne.type]?.find(item => item.id === elementSelectionne.id);
+  if (!objet) return;
+  objet.positionX = Number(mesh.position.x.toFixed(3));
+  objet.positionZ = Number(mesh.position.z.toFixed(3));
+  objet.rotationY = Number(mesh.rotation.y.toFixed(3));
+}
+
+scene3D.setTransformCallback(synchroniserTransformDepuisMesh);
+
+function mettreAJourInstructionTransformation() {
+  if (!modeTransformation) return;
+  const axe = transformationAxe ? transformationAxe.toUpperCase() : 'libre';
+  document.getElementById('instruction-dessin').textContent = modeTransformation === 'move'
+    ? `Sélectionnez un objet puis glissez-le dans la vue 3D pour le déplacer. Axe : ${axe} • Maj = précision.`
+    : `Sélectionnez un objet puis glissez la souris pour le tourner. Maj = précision.`;
+}
+
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'Shift') shiftEnfoncee = true;
+  if (modeTransformation && ['x', 'z'].includes(e.key.toLowerCase())) {
+    transformationAxe = e.key.toLowerCase();
+    mettreAJourInstructionTransformation();
+  }
   if (e.key === 'Escape') {
     definirModeDessin(null); // quitte réellement l'outil actif, pas juste le tracé en cours
+  }
+});
+document.addEventListener('keyup', (e) => {
+  if (e.key === 'Shift') shiftEnfoncee = false;
+  if (modeTransformation && ['x', 'z'].includes(e.key.toLowerCase())) {
+    transformationAxe = null;
+    mettreAJourInstructionTransformation();
   }
 });
 
@@ -1560,49 +1654,87 @@ const HAUTEUR_INTERRUPTEUR = 1.1;
 function lireHauteurPointLumineux() {
   return parseFloat(document.getElementById('def-toit-hauteur-support').value); // même hauteur que le plafond
 }
+// NOUVEAU — catégorie de lampe appliquée aux prochains points lumineux dessinés
+function lireCategorieLampe() {
+  return document.getElementById('def-lampe-categorie').value;
+}
 
 function definirModeDessin(nouveauMode) {
   modeDessin = nouveauMode || null;
+  modeTransformation = null;
   pointDepart = null;
   dernierePositionSouris = null;
+  transformationEnCours = null;
+  pointDepartTransformation = null;
+  objetTransformation = null;
+  transformationAxe = null;
+  controls.enabled = true;
+  scene3D.setTransformVisibility(false);
 
   document.querySelectorAll('.outil-dessin').forEach(bouton => {
-    bouton.classList.toggle('actif', bouton.dataset.mode === (modeDessin || ''));
+    const estActif = bouton.dataset.mode === (modeDessin || '') || bouton.dataset.transform === modeTransformation;
+    bouton.classList.toggle('actif', estActif);
   });
 
+  // NOUVEAU — en 2D, on stylise le SVG pendant le dessin.
   document.getElementById('svg-plan').classList.toggle('mode-dessin-actif', !!modeDessin);
 
   const messages = {
-    dalle: 'Cliquez un premier coin de la dalle, puis le coin opposé.',
-    mur: "Cliquez le point de départ du mur, puis son point d'arrivée. (Maj = accroche à 45°)",
-    poteau: 'Cliquez à l\'endroit où poser le poteau.',
+    dalle: 'Cliquez (2 clics) pour la dalle : coin 1 puis coin opposé.',
+    mur: "Cliquez (2 clics) pour le mur : départ puis arrivée. (Maj = accroche à 45°)",
+    poteau: 'Cliquez pour poser le poteau.',
     fenetre: 'Cliquez sur un mur existant pour y placer une fenêtre.',
-    porte: 'Cliquez sur un mur existant pour y placer une porte.', // NOUVEAU
-    toit: 'Cliquez un premier coin de l\'emprise du toit, puis le coin opposé.', // NOUVEAU
-    prise: 'Cliquez sur un mur existant pour y placer une prise.', // NOUVEAU
-    interrupteur: 'Cliquez sur un mur existant pour y placer un interrupteur.', // NOUVEAU
-    point_lumineux: 'Cliquez à l\'endroit où poser le point lumineux (au plafond).', // NOUVEAU
+    porte: 'Cliquez sur un mur existant pour y placer une porte.',
+    toit: 'Cliquez (2 clics) pour le toit : coin 1 puis coin opposé.',
+    prise: 'Cliquez sur un mur existant pour y placer une prise.',
+    interrupteur: 'Cliquez sur un mur existant pour y placer un interrupteur.',
+    point_lumineux: 'Cliquez pour poser le point lumineux (au plafond).',
   };
+
   document.getElementById('instruction-dessin').textContent =
     messages[modeDessin] || 'Choisissez un outil ci-dessus.';
 
-  dessinerPlan2D();
+  // NOUVEAU — uniquement si le plan 2D est visible : évite d'entraîner
+  // le recalcul visuel quand on travaille en 3D.
+  const vue2d = document.getElementById('vue-2d');
+  if (vue2d && !vue2d.classList.contains('cachee')) {
+    dessinerPlan2D();
+  }
 }
 
 document.querySelectorAll('.outil-dessin').forEach(bouton => {
   bouton.addEventListener('click', () => {
+    // NOTE UX : on conserve le workflow actuel de création sur le plan 2D.
+    // La demande "construction directe en 3D" implique une refonte des
+    // handlers de création (raycast + mapping clic 3D -> x/z) et sort donc
+    // du périmètre de ce changement minime.
+
+    if (bouton.dataset.transform) {
+      modeTransformation = bouton.dataset.transform;
+      modeDessin = null;
+      transformationEnCours = null;
+      pointDepartTransformation = null;
+      objetTransformation = null;
+      transformationAxe = null;
+      controls.enabled = true;
+      document.querySelectorAll('.outil-dessin').forEach(btn => {
+        const estActif = btn.dataset.transform === modeTransformation || btn.dataset.mode === (modeDessin || '');
+        btn.classList.toggle('actif', estActif);
+      });
+      mettreAJourInstructionTransformation();
+      mettreAJourGizmoTransformation();
+      return;
+    }
+
     definirModeDessin(bouton.dataset.mode);
-    // NOUVEAU — la barre d'outils est désormais toujours visible en haut,
-    // même en vue 3D. Le dessin ne se fait que sur le plan 2D, donc on y
-    // bascule automatiquement dès qu'un outil (autre que "Arrêter") est choisi.
+
+    // NOTE UX : ne plus forcer l'affichage du plan 2D au moment où l'utilisateur
+    // choisit un outil. (Les outils de création actuels restent basés sur le
+    // SVG plan, mais au moins la vue ne “bascule” plus automatiquement.)
+    // Si le plan 2D est masqué, l'utilisateur décidera quand le réafficher.
+    // (Voir bouton "toggle-vue".)
     if (bouton.dataset.mode) {
-      const vue2d = document.getElementById('vue-2d');
-      if (vue2d.classList.contains('cachee')) {
-        vue2d.classList.remove('cachee');
-        redimensionnerPlan2D(); // le conteneur vient de devenir visible, sa taille n'était pas connue avant
-        dessinerPlan2D();
-        document.getElementById('toggle-vue').textContent = 'Revenir à la vue 3D';
-      }
+      // volontairement vide
     }
   });
 });
@@ -1770,6 +1902,7 @@ document.getElementById('svg-plan').addEventListener('click', (evt) => {
       mur_id: null,
       offset: 0,
       hauteur: lireHauteurPointLumineux(),
+      categorie_lampe: lireCategorieLampe(), // NOUVEAU
       positionX: position.x, positionZ: position.z,
     });
     recalculerProjet();
@@ -2314,6 +2447,10 @@ document.getElementById('cadrer-vue').addEventListener('click', cadrerVue);
 let elementSelectionne = null; // { type: 'murs', id: 'mur-3' } | null
 let contourSelection = null;   // le THREE.BoxHelper actuellement affiché
 
+function synchroniserSelectionEtat() {
+  etat.selection = elementSelectionne ? { ...elementSelectionne } : null;
+}
+
 function selectionner(type, id) {
   // Cliquer une 2e fois sur le même élément le désélectionne (bascule).
   if (elementSelectionne && elementSelectionne.type === type && elementSelectionne.id === id) {
@@ -2321,12 +2458,14 @@ function selectionner(type, id) {
   } else {
     elementSelectionne = { type, id };
   }
+  synchroniserSelectionEtat();
   appliquerSurbrillanceSelection();
   mettreAJourSurbrillanceListe();
 }
 
 function deselectionner() {
   elementSelectionne = null;
+  synchroniserSelectionEtat();
   appliquerSurbrillanceSelection();
   mettreAJourSurbrillanceListe();
 }
@@ -2336,6 +2475,26 @@ function deselectionner() {
 // contour jaune autour avec BoxHelper. Appelée après chaque sélection
 // ET après chaque reconstruction de la scène (les meshes sont détruits
 // et recréés à chaque recalcul, voir reconstruireScene3D).
+function mettreAJourGizmoTransformation() {
+  if (!modeTransformation || !elementSelectionne) {
+    scene3D.setTransformVisibility(false);
+    return;
+  }
+
+  const mesh = groupeElements.children.find(
+    m => m.userData?.type === elementSelectionne.type && m.userData?.id === elementSelectionne.id
+  );
+  if (!mesh) {
+    scene3D.setTransformVisibility(false);
+    return;
+  }
+
+  scene3D.setTransformTarget(mesh);
+  scene3D.setTransformVisibility(true);
+  scene3D.setTransformMode(modeTransformation === 'rotate' ? 'rotate' : 'translate');
+  scene3D.setTransformAxisConstraint(transformationAxe);
+}
+
 function appliquerSurbrillanceSelection() {
   if (contourSelection) {
     scene.remove(contourSelection);
@@ -2353,6 +2512,22 @@ function appliquerSurbrillanceSelection() {
     }
   }
   mettreAJourManipulateurs3D(); // NOUVEAU -- repositionne les poignées 3D sur l'élément sélectionné
+  if (!elementSelectionne) {
+    scene3D.setTransformVisibility(false);
+    return;
+  }
+
+  const mesh = groupeElements.children.find(
+    m => m.userData?.type === elementSelectionne.type && m.userData?.id === elementSelectionne.id
+  );
+  if (!mesh) {
+    scene3D.setTransformVisibility(false);
+    return; // élément supprimé entre-temps
+  }
+
+  contourSelection = new THREE.BoxHelper(mesh, 0xffcc00);
+  scene.add(contourSelection);
+  mettreAJourGizmoTransformation();
 }
 
 // Ajoute/retire la classe CSS "selectionne" sur la ligne du panneau
@@ -2380,32 +2555,248 @@ renderer.domElement.addEventListener('click', (evt) => {
   // clic sur le plan 2D, pas sur le canvas 3D) -- ici on est toujours
   // dans la scène 3D, donc pas de conflit, mais on vérifie quand même
   // qu'on n'est pas au milieu d'un drag de la caméra (OrbitControls).
+function obtenirRaycastDepuisClic(evt) {
   const rect = renderer.domElement.getBoundingClientRect();
   sourisNormalisee.x = ((evt.clientX - rect.left) / rect.width) * 2 - 1;
   sourisNormalisee.y = -((evt.clientY - rect.top) / rect.height) * 2 + 1;
-
   raycaster.setFromCamera(sourisNormalisee, camera);
-  // recursive=true : nécessaire depuis que les fenêtres/portes sont des
-  // THREE.Group (cadre + vantail + poignée) plutôt qu'un Mesh unique --
-  // sans ça, un Group n'a pas de géométrie propre et n'est jamais touché
-  // par le rayon, même en cliquant pile sur la vitre ou la poignée.
-  const intersections = raycaster.intersectObjects(groupeElements.children, true);
+  return raycaster;
+}
+
+function intersecterPlanSol(raycasterInst) {
+  // Plan sol : y = 0
+  const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  const point = new THREE.Vector3();
+  const t = raycasterInst.ray.intersectPlane(plane, point);
+  return t ? point : null;
+}
+
+function creerObjetDepuisModeDessin3D(evt) {
+  // Ajout depuis l'espace 3D : uniquement
+  // - fenêtres, portes, prises, interrupteurs (toujours sur un mur existant)
+  // Tout le reste reste désactivé en 3D.
+  if (!modeDessin) return false;
+  if (!['fenetre', 'porte', 'prise', 'interrupteur'].includes(modeDessin)) return false;
+
+  const ray = obtenirRaycastDepuisClic(evt);
+
+
+
+
+
+  // En mode 3D, on n'autorise que l'ajout de :
+  // - fenêtres, portes, prises, interrupteurs (sur murs)
+  // Tout le reste doit rester désactivé (murs, dalles, toits, poteaux,
+  // cloisons, point lumineux).
+  // NOTE : si modeDessin n'est pas dans la liste ci-dessous, on ne crée
+  // rien dans etat (aucun objet n'est ajouté au projet).
+  if (['fenetre', 'porte', 'prise', 'interrupteur'].includes(modeDessin)) {
+
+
+
+    const p = intersecterPlanSol(ray);
+    if (!p) return true;
+    const position = { x: p.x, z: p.z };
+
+    if (modeDessin === 'poteau') {
+      const d = lireDefautsPoteau();
+      etat.poteaux.push({
+        id: genererId('poteau'),
+        cote: d.cote,
+        hauteur: d.hauteur,
+        materiau: d.materiau,
+        positionX: position.x,
+        positionZ: position.z,
+      });
+      recalculerProjet();
+      return true;
+    }
+
+    if (modeDessin === 'point_lumineux') {
+      etat.elements_electriques.push({
+        id: genererId('point_lumineux'),
+        type: 'point_lumineux',
+        mur_id: null,
+        offset: 0,
+        hauteur: lireHauteurPointLumineux(),
+        positionX: position.x,
+        positionZ: position.z,
+      });
+      recalculerProjet();
+      return true;
+    }
+
+    if (modeDessin === 'dalle') {
+      if (!pointDepart) { pointDepart = position; return true; }
+      const d = lireDefautsDalle();
+      const longueur = Math.abs(position.x - pointDepart.x);
+      const largeur = Math.abs(position.z - pointDepart.z);
+      if (longueur < 0.3 || largeur < 0.3) { pointDepart = null; return true; }
+      etat.dalles.push({
+        id: genererId('dalle'),
+        longueur: Math.min(30, longueur),
+        largeur: Math.min(30, largeur),
+        epaisseur: d.epaisseur,
+        materiau: d.materiau,
+        positionX: (pointDepart.x + position.x) / 2,
+        positionZ: (pointDepart.z + position.z) / 2,
+      });
+      pointDepart = null;
+      recalculerProjet();
+      return true;
+    }
+
+    if (modeDessin === 'toit') {
+      if (!pointDepart) { pointDepart = position; return true; }
+      const d = lireDefautsToit();
+      const longueur = Math.abs(position.x - pointDepart.x);
+      const largeur = Math.abs(position.z - pointDepart.z);
+      if (longueur < 1 || largeur < 1) { pointDepart = null; return true; }
+      etat.toits.push({
+        id: genererId('toit'),
+        longueur: Math.min(50, longueur),
+        largeur: Math.min(30, largeur),
+        pente_degres: d.pente_degres,
+        materiau: d.materiau,
+        hauteur_support: d.hauteur_support,
+        positionX: (pointDepart.x + position.x) / 2,
+        positionZ: (pointDepart.z + position.z) / 2,
+        rotationY: 0,
+      });
+      pointDepart = null;
+      recalculerProjet();
+      return true;
+    }
+  }
+
+  if (modeDessin === 'mur' || modeDessin === 'cloison') {
+    const p = intersecterPlanSol(ray);
+    if (!p) return true;
+    let position = { x: p.x, z: p.z };
+
+    if (shiftEnfoncee && pointDepart) {
+      const dx = position.x - pointDepart.x;
+      const dz = position.z - pointDepart.z;
+      const longueur = Math.sqrt(dx * dx + dz * dz);
+      const angleAccroche = Math.round(Math.atan2(dz, dx) / (Math.PI / 4)) * (Math.PI / 4);
+      position = {
+        x: pointDepart.x + Math.cos(angleAccroche) * longueur,
+        z: pointDepart.z + Math.sin(angleAccroche) * longueur,
+      };
+    } else {
+      position = accrocherALaGrille(position);
+    }
+
+    if (!pointDepart) { pointDepart = position; return true; }
+    const dx = position.x - pointDepart.x;
+    const dz = position.z - pointDepart.z;
+    const longueur = Math.sqrt(dx * dx + dz * dz);
+    if (longueur < 0.2) return true;
+    const d = modeDessin === 'mur' ? lireDefautsMur() : lireDefautsCloison();
+
+    etat.murs.push({
+      id: genererId(modeDessin === 'mur' ? 'mur' : 'cloison'),
+      longueur: Math.min(50, longueur),
+      hauteur: d.hauteur,
+      epaisseur: d.epaisseur,
+      materiau: d.materiau,
+      positionX: (pointDepart.x + position.x) / 2,
+      positionZ: (pointDepart.z + position.z) / 2,
+      rotationY: Math.atan2(-dz, dx),
+      porteur: modeDessin === 'mur',
+    });
+    pointDepart = null;
+    recalculerProjet();
+    return true;
+  }
+
+  // Outils accroché aux murs : on raycast pour récupérer le mur le plus proche.
+  if (['fenetre', 'porte', 'prise', 'interrupteur'].includes(modeDessin)) {
+    const intersections = ray.intersectObjects(groupeElements.children, true);
+    if (intersections.length === 0) return true;
+
+    let objetTouche = intersections[0].object;
+    while (objetTouche && !objetTouche.userData?.type) objetTouche = objetTouche.parent;
+    if (!objetTouche || objetTouche.userData.type !== 'murs') return true;
+
+    const murId = objetTouche.userData.id;
+    const mur = etat.murs.find(m => m.id === murId);
+    if (!mur) return true;
+
+    // Point d'impact projeté au centre du mur (x/z en monde). On calcule via
+    // intersection sur y=0 puis on projette sur le mur : c'est cohérent avec le modèle
+    // (offset le long du mur en x/z).
+    const p = intersecterPlanSol(ray);
+    const pointMonde = p ? { x: p.x, z: p.z } : { x: mur.positionX, z: mur.positionZ };
+    const { offset } = projeterSurMur(mur, pointMonde);
+
+    if (modeDessin === 'fenetre') {
+      const d = lireDefautsFenetre();
+      if (mur.longueur < d.largeur) { alert('Ce mur est trop court pour une fenêtre de cette largeur.'); return true; }
+      const offsetBorne = Math.max(d.largeur / 2, Math.min(mur.longueur - d.largeur / 2, offset));
+      etat.fenetres.push({
+        id: genererId('fenetre'),
+        mur_id: mur.id,
+        offset: offsetBorne,
+        largeur: d.largeur,
+        hauteur: d.hauteur,
+        hauteur_allege: d.hauteur_allege,
+      });
+      recalculerProjet();
+      return true;
+    }
+
+    if (modeDessin === 'porte') {
+      const d = lireDefautsPorte();
+      if (mur.longueur < d.largeur) { alert('Ce mur est trop court pour une porte de cette largeur.'); return true; }
+      const offsetBorne = Math.max(d.largeur / 2, Math.min(mur.longueur - d.largeur / 2, offset));
+      etat.portes.push({
+        id: genererId('porte'),
+        mur_id: mur.id,
+        offset: offsetBorne,
+        largeur: d.largeur,
+        hauteur: d.hauteur,
+      });
+      recalculerProjet();
+      return true;
+    }
+
+    if (modeDessin === 'prise' || modeDessin === 'interrupteur') {
+      const hauteur = modeDessin === 'prise' ? HAUTEUR_PRISE : HAUTEUR_INTERRUPTEUR;
+      etat.elements_electriques.push({
+        id: genererId(modeDessin),
+        type: modeDessin,
+        mur_id: mur.id,
+        offset: Math.max(0, Math.min(mur.longueur, offset)),
+        hauteur,
+        positionX: 0,
+        positionZ: 0,
+      });
+      recalculerProjet();
+      return true;
+    }
+  }
+
+  return false;
+}
+
+renderer.domElement.addEventListener('click', (evt) => {
+  if (creerObjetDepuisModeDessin3D(evt)) return;
+
+  const raycasterInst = obtenirRaycastDepuisClic(evt);
+  const intersections = raycasterInst.intersectObjects(groupeElements.children, true);
+
 
   if (intersections.length === 0) {
     deselectionner();
     return;
   }
 
-  // Le premier élément de la liste est le plus proche de la caméra
-  // (Three.js trie déjà les intersections par distance croissante).
-  // On remonte la chaîne de parents jusqu'à trouver le userData -- avec
-  // le mode récursif, l'objet touché est souvent un enfant (le vantail,
-  // la poignée...) et pas le Group racine qui porte {type, id}.
   let objetTouche = intersections[0].object;
   while (objetTouche && !objetTouche.userData?.type) {
     objetTouche = objetTouche.parent;
   }
-  if (!objetTouche) return; // sécurité, ne devrait pas arriver
+  if (!objetTouche) return;
   selectionner(objetTouche.userData.type, objetTouche.userData.id);
 });
 // ============================================================
@@ -2559,6 +2950,11 @@ window.addEventListener('mouseup', () => {
     controls.enabled = true;
   }
 });
+renderer.domElement.addEventListener('pointerup', () => {
+  if (!modeTransformation || !elementSelectionne) return;
+  recalculerProjet();
+});
+
 // --- Détection du clic dans la liste du panneau latéral ---
 document.getElementById('liste-elements').addEventListener('click', (evt) => {
   // Ne pas déclencher la sélection si on clique sur le bouton supprimer
@@ -2914,6 +3310,8 @@ document.getElementById('reinitialiser-projet').addEventListener('click', () => 
   etat.toits = []; // NOUVEAU
   etat.elements_electriques = []; // NOUVEAU
   etat.tableau_electrique = false; // NOUVEAU
+  elementSelectionne = null;
+  synchroniserSelectionEtat();
   const caseTableau = document.getElementById('def-tableau-electrique');
   if (caseTableau) caseTableau.checked = false;
   definirModeDessin(null);
@@ -2980,7 +3378,7 @@ function chargerMaisonExemple() {
   etat.elements_electriques.push({ id: genererId('prise'), type: 'prise', mur_id: idMurNord, offset: 1, hauteur: HAUTEUR_PRISE, positionX: 0, positionZ: 0 });
   etat.elements_electriques.push({ id: genererId('prise'), type: 'prise', mur_id: idMurNord, offset: 7, hauteur: HAUTEUR_PRISE, positionX: 0, positionZ: 0 });
   etat.elements_electriques.push({ id: genererId('interrupteur'), type: 'interrupteur', mur_id: idMurSud, offset: 1, hauteur: HAUTEUR_INTERRUPTEUR, positionX: 0, positionZ: 0 });
-  etat.elements_electriques.push({ id: genererId('point_lumineux'), type: 'point_lumineux', mur_id: null, offset: 0, hauteur: HAUTEUR_MUR, positionX: 0, positionZ: 0 });
+  etat.elements_electriques.push({ id: genererId('point_lumineux'), type: 'point_lumineux', mur_id: null, offset: 0, hauteur: HAUTEUR_MUR, categorie_lampe: 'suspension', positionX: 0, positionZ: 0 });
 
   cadrerApresRecalcul = true;
   recalculerProjet();
@@ -3173,6 +3571,8 @@ function confirmerNouveauProjet() {
   etat.toits = [];
   etat.elements_electriques = [];
   etat.tableau_electrique = false;
+  elementSelectionne = null;
+  synchroniserSelectionEtat();
   const caseTableau = document.getElementById('def-tableau-electrique');
   if (caseTableau) caseTableau.checked = false;
 
