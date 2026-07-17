@@ -14,11 +14,22 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Optional
 
+
+import math
+import os # Ajout pour lire les variables d'environnement
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+# ... reste de vos imports ...
+
 app = FastAPI(title="HCOSMO Backend - Prototype v3")
+
+# Remplacez "*" par l'URL de votre front sur Vercel
+# Exemple: ["https://hcosmo-frontend.vercel.app"]
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", ["https://hcosmo.vercel.app"]).split(",")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
